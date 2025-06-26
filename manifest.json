@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "Tab+Mic Audio WebSocket Stream",
+  "description": "Capture tab and mic audio, encode as MP3 and stream via WebSocket",
+  "version": "1.0",
+  "permissions": ["tabCapture", "activeTab", "windows"],
+  "host_permissions": ["<all_urls>"],
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["lame.min.js", "audio-worklet.js", "offscreen.html"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}
