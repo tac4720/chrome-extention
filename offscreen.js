@@ -2,7 +2,8 @@
   let audioContext, tabSourceNode, micSourceNode, processor, workletNode;
   let ws, tabStream, micStream, mp3Encoder;
   let keepAliveOsc, keepAliveGain, dummyAudio;
-  const WS_URL = 'wss://app.paratalk.jp/ws?id='; // WebSocketサーバーのURL
+  let WS_URL = 'wss://app.paratalk.jp/ws?id='; // WebSocketサーバーのURL不要？
+  let receivedPublicId = null;
   
   // AudioWorkletは物理ファイルとして提供（audio-worklet.js）
 
@@ -25,7 +26,12 @@
       console.warn('Microphone access denied, recording tab audio only:', e);
       // This is expected in most cases due to permissions policy
     }
-    ws = new WebSocket(WS_URL);
+    // publicIdを含めたWebSocket URLを生成
+    const wsUrl = receivedPublicId
+      ? `wss://app.paratalk.jp/ws?publicId=${encodeURIComponent(receivedPublicId)}`
+      : 'wss://app.paratalk.jp/ws';
+    console.log('[offscreen.js] WebSocket接続URL:', wsUrl);
+    ws = new WebSocket(wsUrl);
     ws.binaryType = 'arraybuffer';
     ws.onerror = (e) => console.error('WebSocket error', e);
     ws.onopen = () => {
@@ -175,6 +181,7 @@
   chrome.runtime.onMessage.addListener((message) => {
     if (!message || !message.action) return;
     if (message.action === 'startRecordingInOffscreen') {
+      receivedPublicId = message.publicId;
       startRecording();
     } else if (message.action === 'stopRecordingInOffscreen') {
       stopRecording();

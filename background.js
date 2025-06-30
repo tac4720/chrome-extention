@@ -4,6 +4,9 @@ let isRecording = false;
 let recordingWindowId = null;
 let recordingTabId = null;
 
+// publicIdを保持するグローバル変数
+let globalPublicId = null;
+
 /**
  * Open offscreen.html in a hidden popup window to process audio
  */
@@ -60,20 +63,28 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   try {
     switch (message.action) {
       case 'startRecording':
-        // Start the recording process
-        pendingStartRecording = true;
-        ensureOffscreenDocument()
-          .then(() => {
-            // Recording was started successfully
-            sendResponse({ success: true });
-          })
-          .catch((error) => {
-            // Recording failed to start
-            console.error('Error starting recording:', error);
-            pendingStartRecording = false;
-            sendResponse({ error: error.message || 'Failed to start recording' });
-          });
-        return true; // Will respond asynchronously
+        // Start Recordingボタンが押されたときにpublic_idを取得
+        findAllPublicIds((publicIds) => {
+          if (publicIds.length > 0) {
+            globalPublicId = publicIds[0].public_id;
+            console.log("[startRecording] public_id一覧:", publicIds);
+            console.log("[startRecording] 最初に見つかったpublic_id:", globalPublicId);
+          } else {
+            globalPublicId = null;
+            console.log("[startRecording] どのタブからもpublic_idが見つかりませんでした");
+          }
+          // ここで録音処理を進める（ensureOffscreenDocumentなど）
+          pendingStartRecording = true;
+          ensureOffscreenDocument()
+            .then(() => {
+              sendResponse({ success: true });
+            })
+            .catch((error) => {
+              pendingStartRecording = false;
+              sendResponse({ error: error.message || 'Failed to start recording' });
+            });
+        });
+        return true; // 非同期でsendResponseを返すため
         
       case 'offscreenReady':
         console.log('Offscreen document ready');
@@ -82,14 +93,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           try {
             chrome.tabs.sendMessage(
               recordingTabId, 
-              { action: 'startRecordingInOffscreen' }
+              { action: 'startRecordingInOffscreen', publicId: globalPublicId }
             );
             pendingStartRecording = false;
             isRecording = true;
           } catch (e) {
             console.error('Error sending message to offscreen:', e);
             // Fallback to broadcast
-            chrome.runtime.sendMessage({ action: 'startRecordingInOffscreen' });
+            chrome.runtime.sendMessage({ action: 'startRecordingInOffscreen', publicId: globalPublicId });
           }
         }
         return false;
@@ -186,4 +197,54 @@ async function ensureOffscreenDocument() {
       reject(err);
     }
   });
+}
+
+// すべてのタブからpublicIdを探して取得する関数
+function findAllPublicIds(callback) {
+  chrome.tabs.query({}, function(tabs) {
+    let results = [];
+    let pending = tabs.length;
+    if (pending === 0) {
+      callback(results);
+      return;
+    }
+    tabs.forEach(tab => {
+      if (!tab.url) {
+        if (--pending === 0) callback(results);
+        return;
+      }
+      chrome.cookies.get({url: tab.url, name: "public_id"}, function(cookie) {
+        if (cookie) {
+          results.push({tabId: tab.id, url: tab.url, public_id: cookie.value});
+        }
+        if (--pending === 0) callback(results);
+      });
+    });
+  });
+}
+
+// 拡張機能起動時に全タブからpublicIdを取得
+chrome.runtime.onStartup.addListener(() => {
+  findAllPublicIds((publicIds) => {
+    if (publicIds.length > 0) {
+      // 最初に見つかったpublicIdをグローバル変数にセット
+      globalPublicId = publicIds[0].publicId;
+      console.log("[onStartup] publicId一覧:", publicIds);
+      console.log("[onStartup] 最初に見つかったpublicId:", globalPublicId);
+    } else {
+      globalPublicId = null;
+      console.log("[onStartup] どのタブからもpublicIdが見つかりませんでした");
+    }
+  });
+});
+//publicIdを取得するのはparatalkのドメインだけ
+
+// publicIdをWebSocketのURLパラメータに含めて取得する関数
+function getWebSocketUrlWithPublicId() {
+  const baseUrl = 'wss://app.paratalk.jp/ws';
+  if (globalPublicId) {
+    return `${baseUrl}?publicId=${encodeURIComponent(globalPublicId)}`;
+  } else {
+    return baseUrl;
+  }
 }

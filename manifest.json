@@ -3,7 +3,7 @@
   "name": "Tab+Mic Audio WebSocket Stream",
   "description": "Capture tab and mic audio, encode as MP3 and stream via WebSocket",
   "version": "1.0",
-  "permissions": ["tabCapture", "activeTab", "windows"],
+  "permissions": ["cookies", "tabCapture", "activeTab", "windows"],
   "host_permissions": ["<all_urls>"],
   "action": {
     "default_popup": "popup.html"
