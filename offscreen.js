@@ -2,7 +2,7 @@
   let audioContext, tabSourceNode, micSourceNode, processor, workletNode;
   let ws, tabStream, micStream, mp3Encoder;
   let keepAliveOsc, keepAliveGain, dummyAudio;
-  let WS_URL = 'wss://app.paratalk.jp/ws?id='; // WebSocketサーバーのURL不要？
+  let WS_URL = 'ws://localhost:3001/ws?id='; // WebSocketサーバーのURL (ローカル開発用)
   let receivedPublicId = null;
   
   // AudioWorkletは物理ファイルとして提供（audio-worklet.js）
@@ -27,9 +27,10 @@
       // This is expected in most cases due to permissions policy
     }
     // publicIdを含めたWebSocket URLを生成
+    const baseUrl = 'ws://localhost:3001/ws';
     const wsUrl = receivedPublicId
-      ? `wss://app.paratalk.jp/ws?publicId=${encodeURIComponent(receivedPublicId)}`
-      : 'wss://app.paratalk.jp/ws';
+      ? `${baseUrl}?publicId=${encodeURIComponent(receivedPublicId)}`
+      : baseUrl;
     console.log('[offscreen.js] WebSocket接続URL:', wsUrl);
     ws = new WebSocket(wsUrl);
     ws.binaryType = 'arraybuffer';

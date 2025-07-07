@@ -13,7 +13,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   
   // Check if WebSocket server is available
-  const testSocket = new WebSocket('wss://app.paratalk.jp/ws');
+  const testSocket = new WebSocket('ws://localhost:3001/ws');
   testSocket.onopen = () => {
     if (statusElement) {
       statusElement.textContent = 'Server connected';
