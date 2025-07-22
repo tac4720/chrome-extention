@@ -3,9 +3,125 @@ let pendingStartRecording = false;
 let isRecording = false;
 let recordingWindowId = null;
 let recordingTabId = null;
+let recordingStartTime = null;
+let reconnectAttempts = 0;
+const MAX_RECONNECT_ATTEMPTS = 3;
+const RECORDING_TIMEOUT = 300000; // 5 minutes max recording time
 
 // publicIdを保持するグローバル変数
 let globalPublicId = null;
+
+// Health check and monitoring
+let healthCheckInterval = null;
+let lastHealthCheck = Date.now();
+
+// Error tracking
+const errorLog = [];
+const MAX_ERROR_LOG_SIZE = 100;
+
+/**
+ * Log errors with timestamp and context
+ */
+function logError(error, context = '') {
+  const errorEntry = {
+    timestamp: new Date().toISOString(),
+    error: error.toString(),
+    context,
+    stack: error.stack || 'No stack trace'
+  };
+  
+  errorLog.push(errorEntry);
+  if (errorLog.length > MAX_ERROR_LOG_SIZE) {
+    errorLog.shift();
+  }
+  
+  console.error(`[Background Error] ${context}:`, error);
+}
+
+/**
+ * Validate recording state consistency
+ */
+function validateRecordingState() {
+  const now = Date.now();
+  
+  // Check for stuck recording
+  if (isRecording && recordingStartTime && (now - recordingStartTime) > RECORDING_TIMEOUT) {
+    logError(new Error('Recording timeout exceeded'), 'validateRecordingState');
+    forceStopRecording();
+    return false;
+  }
+  
+  // Check for orphaned windows
+  if (recordingWindowId && isRecording) {
+    chrome.windows.get(recordingWindowId).catch(() => {
+      logError(new Error('Recording window lost'), 'validateRecordingState');
+      resetRecordingState();
+    });
+  }
+  
+  return true;
+}
+
+/**
+ * Force stop recording and cleanup
+ */
+function forceStopRecording() {
+  console.log('[Background] Force stopping recording due to error or timeout');
+  
+  pendingStartRecording = false;
+  isRecording = false;
+  recordingStartTime = null;
+  
+  if (recordingWindowId) {
+    try {
+      chrome.windows.remove(recordingWindowId);
+    } catch (e) {
+      logError(e, 'forceStopRecording - window removal');
+    }
+    recordingWindowId = null;
+    recordingTabId = null;
+  }
+  
+  // Send broadcast stop message
+  try {
+    chrome.runtime.sendMessage({ action: 'stopRecordingInOffscreen' });
+  } catch (e) {
+    logError(e, 'forceStopRecording - message send');
+  }
+}
+
+/**
+ * Reset all recording state
+ */
+function resetRecordingState() {
+  pendingStartRecording = false;
+  isRecording = false;
+  recordingWindowId = null;
+  recordingTabId = null;
+  recordingStartTime = null;
+  reconnectAttempts = 0;
+}
+
+/**
+ * Start health monitoring
+ */
+function startHealthMonitoring() {
+  if (healthCheckInterval) {
+    clearInterval(healthCheckInterval);
+  }
+  
+  healthCheckInterval = setInterval(() => {
+    try {
+      validateRecordingState();
+      lastHealthCheck = Date.now();
+    } catch (e) {
+      logError(e, 'healthCheck');
+    }
+  }, 10000); // Check every 10 seconds
+}
+
+// Initialize health monitoring
+startHealthMonitoring();
 
 /**
  * Open offscreen.html in a hidden popup window to process audio
@@ -56,146 +172,369 @@ async function openOffscreenWindow() {
 }
 // Handle messages from popup and offscreen window
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (!message || !message.action) return false;
+  if (!message || !message.action) {
+    logError(new Error('Invalid message format'), 'onMessage');
+    return false;
+  }
   
   console.log('Background received message:', message.action);
   
   try {
     switch (message.action) {
       case 'startRecording':
-        // Start Recordingボタンが押されたときにpublic_idを取得
-        findAllPublicIds((publicIds) => {
-          if (publicIds.length > 0) {
-            globalPublicId = publicIds[0].public_id;
-            console.log("[startRecording] public_id一覧:", publicIds);
-            console.log("[startRecording] 最初に見つかったpublic_id:", globalPublicId);
-          } else {
-            globalPublicId = null;
-            console.log("[startRecording] どのタブからもpublic_idが見つかりませんでした");
-          }
-          // ここで録音処理を進める（ensureOffscreenDocumentなど）
-          pendingStartRecording = true;
-          ensureOffscreenDocument()
-            .then(() => {
-              sendResponse({ success: true });
-            })
-            .catch((error) => {
-              pendingStartRecording = false;
-              sendResponse({ error: error.message || 'Failed to start recording' });
-            });
-        });
-        return true; // 非同期でsendResponseを返すため
-        
-      case 'offscreenReady':
-        console.log('Offscreen document ready');
-        if (pendingStartRecording && recordingTabId) {
-          // Try using targeted messaging to avoid context invalidation
-          try {
-            chrome.tabs.sendMessage(
-              recordingTabId, 
-              { action: 'startRecordingInOffscreen', publicId: globalPublicId }
-            );
-            pendingStartRecording = false;
-            isRecording = true;
-          } catch (e) {
-            console.error('Error sending message to offscreen:', e);
-            // Fallback to broadcast
-            chrome.runtime.sendMessage({ action: 'startRecordingInOffscreen', publicId: globalPublicId });
-          }
-        }
-        return false;
+        return handleStartRecording(sendResponse);
         
       case 'stopRecording':
-        pendingStartRecording = false;
+        return handleStopRecording(sendResponse);
+        
+      case 'getRecordingStatus':
+        return handleGetRecordingStatus(sendResponse);
+        
+      case 'offscreenReady':
+        return handleOffscreenReady();
+        
+      case 'recordingStopped':
+        return handleRecordingStopped();
+        
+      case 'recordingError':
+        return handleRecordingError(message);
+        
+      case 'getErrorLog':
+        sendResponse({ errorLog: errorLog.slice(-10) }); // Last 10 errors
+        return false;
+        
+      case 'getHealthStatus':
+        sendResponse({
+          isRecording,
+          pendingStartRecording,
+          recordingStartTime,
+          lastHealthCheck,
+          uptime: Date.now() - lastHealthCheck
+        });
+        return false;
+        
+      default:
+        logError(new Error(`Unknown action: ${message.action}`), 'onMessage');
+        sendResponse({ error: 'Unknown action' });
+        return false;
+    }
+  } catch (error) {
+    logError(error, `onMessage - ${message.action}`);
+    sendResponse({ error: 'Internal error occurred' });
+    return false;
+  }
+});
+
+/**
+ * Handle start recording request with validation and error handling
+ */
+function handleStartRecording(sendResponse) {
+  console.log('[Background] handleStartRecording called');
+  try {
+    // Validate current state
+    if (isRecording || pendingStartRecording) {
+      console.log('[Background] Recording already in progress, ignoring start request');
+      sendResponse({ error: 'Recording already in progress' });
+      return false;
+    }
+    
+    // Validate system capabilities
+    if (!chrome.tabCapture) {
+      console.error('[Background] TabCapture API not available');
+      logError(new Error('TabCapture API not available'), 'handleStartRecording');
+      sendResponse({ error: 'Audio capture not supported' });
+      return false;
+    }
+    
+    console.log('[Background] Starting recording process...');
+    
+    // Reset state
+    resetRecordingState();
+    recordingStartTime = Date.now();
+    
+    // Find public IDs with timeout
+    const publicIdTimeout = setTimeout(() => {
+      logError(new Error('Public ID search timeout'), 'handleStartRecording');
+      pendingStartRecording = false;
+      sendResponse({ error: 'Initialization timeout' });
+    }, 10000);
+    
+    console.log('[Background] Calling findAllPublicIds...');
+    findAllPublicIds((publicIds) => {
+      console.log('[Background] findAllPublicIds callback called with:', publicIds);
+      clearTimeout(publicIdTimeout);
+      
+      if (publicIds.length > 0) {
+        globalPublicId = publicIds[0].public_id;
+        console.log("[Background] Found public_id:", globalPublicId);
+      } else {
+        globalPublicId = null;
+        console.log("[Background] No public_id found");
+      }
+      
+      pendingStartRecording = true;
+      console.log('[Background] Calling ensureOffscreenDocument...');
+      
+      ensureOffscreenDocument()
+        .then(() => {
+          console.log('[Background] Recording start initiated successfully');
+          sendResponse({ success: true });
+        })
+        .catch((error) => {
+          console.error('[Background] ensureOffscreenDocument failed:', error);
+          logError(error, 'handleStartRecording - ensureOffscreenDocument');
+          pendingStartRecording = false;
+          recordingStartTime = null;
+          sendResponse({ error: error.message || 'Failed to initialize recording' });
+        });
+    });
+    
+    return true; // Async response
+  } catch (error) {
+    logError(error, 'handleStartRecording');
+    pendingStartRecording = false;
+    recordingStartTime = null;
+    sendResponse({ error: 'Failed to start recording' });
+    return false;
+  }
+}
+
+/**
+ * Handle stop recording request
+ */
+function handleStopRecording(sendResponse) {
+  try {
+    if (!isRecording && !pendingStartRecording) {
+      console.log('Stop requested but not recording');
+      sendResponse({ success: true });
+      return false;
+    }
+    
+    pendingStartRecording = false;
+    console.log('Initiating stop recording process');
+    
+    // Set up timeout for stop operation
+    const stopTimeoutId = setTimeout(() => {
+      logError(new Error('Stop operation timeout'), 'handleStopRecording');
+      forceStopRecording();
+      sendResponse({ success: true });
+    }, 10000);
+    
+    // Set up stop completion listener
+    const stopListener = (message) => {
+      if (message && message.action === 'recordingStopped') {
+        console.log('Recording stop confirmed by offscreen');
+        clearTimeout(stopTimeoutId);
+        chrome.runtime.onMessage.removeListener(stopListener);
+        
         isRecording = false;
+        recordingStartTime = null;
         
-        // Try targeted messaging first
-        if (recordingTabId) {
-          try {
-            chrome.tabs.sendMessage(
-              recordingTabId, 
-              { action: 'stopRecordingInOffscreen' }
-            );
-          } catch (e) {
-            console.error('Error sending stop message to tab:', e);
-            // Fallback to broadcast
-            chrome.runtime.sendMessage({ action: 'stopRecordingInOffscreen' });
-          }
-        } else {
-          // Broadcast if we don't know which tab
-          chrome.runtime.sendMessage({ action: 'stopRecordingInOffscreen' });
-        }
-        
-        // Try to close the window
+        // Close window after confirmation
         if (recordingWindowId) {
-          try {
-            chrome.windows.remove(recordingWindowId);
-          } catch (e) {
-            console.error('Error closing recording window:', e);
-          }
+          setTimeout(() => {
+            try {
+              chrome.windows.remove(recordingWindowId);
+              console.log('Recording window closed');
+            } catch (e) {
+              logError(e, 'handleStopRecording - window close');
+            }
+          }, 100);
           recordingWindowId = null;
           recordingTabId = null;
         }
         
         sendResponse({ success: true });
-        return false;
-        
-      case 'getRecordingStatus':
-        sendResponse({ isRecording });
-        return false;
-        
-      case 'recordingError':
-        // Handle errors reported from offscreen document
-        console.error('Recording error:', message.error);
-        isRecording = false;
-        pendingStartRecording = false;
-        return false;
+      }
+    };
+    
+    chrome.runtime.onMessage.addListener(stopListener);
+    
+    // Send stop message
+    try {
+      chrome.runtime.sendMessage({ action: 'stopRecordingInOffscreen' });
+    } catch (e) {
+      logError(e, 'handleStopRecording - message send');
+      clearTimeout(stopTimeoutId);
+      chrome.runtime.onMessage.removeListener(stopListener);
+      forceStopRecording();
+      sendResponse({ error: 'Failed to send stop message' });
     }
-  } catch (e) {
-    console.error('Error processing message:', e);
-    sendResponse({ error: e.message });
+    
+    return true; // Async response
+  } catch (error) {
+    logError(error, 'handleStopRecording');
+    forceStopRecording();
+    sendResponse({ error: 'Failed to stop recording' });
     return false;
   }
-  
-  return false;
-});
+}
 
 /**
- * Ensure offscreen document is ready to handle audio processing
+ * Handle recording status request
+ */
+function handleGetRecordingStatus(sendResponse) {
+  try {
+    console.log('[background.js] Status check - isRecording:', isRecording, 'pendingStart:', pendingStartRecording, 'windowId:', recordingWindowId);
+    
+    if (pendingStartRecording) {
+      sendResponse({ isRecording: false, isPending: true });
+      return false;
+    }
+    
+    if (isRecording && recordingWindowId) {
+      chrome.windows.get(recordingWindowId)
+        .then(() => {
+          console.log('[background.js] Recording window exists, confirming recording active');
+          sendResponse({ 
+            isRecording: true, 
+            startTime: recordingStartTime,
+            duration: recordingStartTime ? Date.now() - recordingStartTime : 0
+          });
+        })
+        .catch(() => {
+          logError(new Error('Recording window missing during status check'), 'handleGetRecordingStatus');
+          resetRecordingState();
+          sendResponse({ isRecording: false });
+        });
+      return true;
+    } else {
+      sendResponse({ isRecording });
+      return false;
+    }
+  } catch (error) {
+    logError(error, 'handleGetRecordingStatus');
+    sendResponse({ isRecording: false, error: 'Status check failed' });
+    return false;
+  }
+}
+
+/**
+ * Handle offscreen ready notification
+ */
+function handleOffscreenReady() {
+  try {
+    console.log('Offscreen document ready');
+    if (pendingStartRecording) {
+      console.log('Sending startRecordingInOffscreen message with publicId:', globalPublicId);
+      
+      try {
+        chrome.runtime.sendMessage({ 
+          action: 'startRecordingInOffscreen', 
+          publicId: globalPublicId 
+        });
+        pendingStartRecording = false;
+        isRecording = true;
+      } catch (e) {
+        logError(e, 'handleOffscreenReady - message send');
+        pendingStartRecording = false;
+        recordingStartTime = null;
+      }
+    }
+    return false;
+  } catch (error) {
+    logError(error, 'handleOffscreenReady');
+    pendingStartRecording = false;
+    recordingStartTime = null;
+    return false;
+  }
+}
+
+/**
+ * Handle recording stopped notification
+ */
+function handleRecordingStopped() {
+  try {
+    console.log('Recording stopped notification received');
+    // This is handled by the listener in handleStopRecording
+    return false;
+  } catch (error) {
+    logError(error, 'handleRecordingStopped');
+    return false;
+  }
+}
+
+/**
+ * Handle recording error notification
+ */
+function handleRecordingError(message) {
+  try {
+    const error = new Error(message.error || 'Unknown recording error');
+    logError(error, 'Recording error from offscreen');
+    
+    // Force cleanup on error
+    forceStopRecording();
+    
+    return false;
+  } catch (error) {
+    logError(error, 'handleRecordingError');
+    return false;
+  }
+}
+
+/**
+ * Enhanced offscreen document management with retry logic
  */
 async function ensureOffscreenDocument() {
+  console.log('[Background] ensureOffscreenDocument called');
   return new Promise(async (resolve, reject) => {
-    try {
-      console.log('Starting offscreen document...');
+    let attempts = 0;
+    const maxAttempts = 3;
+    
+    const tryCreateOffscreen = async () => {
+      attempts++;
       
-      // Create the offscreen window
-      const window = await openOffscreenWindow();
-      
-      if (!window) {
-        throw new Error('Failed to create offscreen window');
-      }
-      
-      // Set a timeout to detect if setup fails
-      const timeoutId = setTimeout(() => {
-        reject(new Error('Offscreen document setup timed out'));
-      }, 5000); // 5 second timeout
-      
-      // Listen for the ready message
-      const messageListener = (message) => {
-        if (message && message.action === 'offscreenReady') {
-          console.log('Offscreen document ready');
-          clearTimeout(timeoutId);
-          chrome.runtime.onMessage.removeListener(messageListener);
-          resolve();
+      try {
+        console.log(`[Background] Creating offscreen document (attempt ${attempts}/${maxAttempts})`);
+        
+        // Create the offscreen window
+        console.log('[Background] Calling openOffscreenWindow...');
+        const window = await openOffscreenWindow();
+        
+        if (!window) {
+          throw new Error('Failed to create offscreen window');
         }
-      };
-      
-      // Add temporary listener for offscreen ready message
-      chrome.runtime.onMessage.addListener(messageListener);
-    } catch (err) {
-      console.error('Error ensuring offscreen document:', err);
-      reject(err);
-    }
+        
+        console.log('[Background] Offscreen window created:', window.id);
+        
+        // Set timeout for ready message
+        const timeoutId = setTimeout(() => {
+          chrome.runtime.onMessage.removeListener(messageListener);
+          
+          if (attempts < maxAttempts) {
+            console.log(`[Background] Offscreen setup timeout, retrying (${attempts}/${maxAttempts})`);
+            setTimeout(tryCreateOffscreen, 1000);
+          } else {
+            logError(new Error('Offscreen document setup timed out after all attempts'), 'ensureOffscreenDocument');
+            reject(new Error('Offscreen document setup timed out'));
+          }
+        }, 15000); // 15 second timeout
+        
+        // Listen for ready message
+        const messageListener = (message) => {
+          if (message && message.action === 'offscreenReady') {
+            console.log('[Background] Offscreen document ready');
+            clearTimeout(timeoutId);
+            chrome.runtime.onMessage.removeListener(messageListener);
+            resolve();
+          }
+        };
+        
+        chrome.runtime.onMessage.addListener(messageListener);
+        
+      } catch (error) {
+        logError(error, `ensureOffscreenDocument - attempt ${attempts}`);
+        
+        if (attempts < maxAttempts) {
+          console.log(`[Background] Retrying offscreen creation (${attempts}/${maxAttempts})`);
+          setTimeout(tryCreateOffscreen, 2000);
+        } else {
+          reject(error);
+        }
+      }
+    };
+    
+    tryCreateOffscreen();
   });
 }
 

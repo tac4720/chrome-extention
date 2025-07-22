@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Tab+Mic Audio WebSocket Stream",
+  "name": "Paratalk",
   "description": "Capture tab and mic audio, encode as MP3 and stream via WebSocket",
   "version": "1.0",
   "permissions": ["cookies", "tabCapture", "activeTab", "windows"],

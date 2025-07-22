@@ -4,11 +4,18 @@ class AudioProcessor extends AudioWorkletProcessor {
     this.bufferSize = 4096;
     this.buffer = new Float32Array(this.bufferSize);
     this.bufferFill = 0;
+    this.processCount = 0;
+    console.log('[AudioWorklet] AudioProcessor initialized');
   }
   
   process(inputs, outputs, parameters) {
+    this.processCount++;
     const input = inputs[0][0];
     const output = outputs[0][0];
+    
+    if (this.processCount % 1000 === 0) {
+      console.log('[AudioWorklet] Process count:', this.processCount, 'Input:', !!input, 'Output:', !!output);
+    }
     
     if (input && output) {
       // Copy input to output
@@ -23,6 +30,9 @@ class AudioProcessor extends AudioWorkletProcessor {
       
       // If buffer is full, send it
       if (this.bufferFill >= this.bufferSize) {
+        if (this.processCount <= 10) {
+          console.log('[AudioWorklet] Sending buffer, size:', this.bufferSize);
+        }
         this.port.postMessage({type: 'buffer', buffer: this.buffer.slice(0)});
         this.bufferFill = 0;
       }
