@@ -6,7 +6,7 @@ let recordingTabId = null;
 let recordingStartTime = null;
 let reconnectAttempts = 0;
 const MAX_RECONNECT_ATTEMPTS = 3;
-const RECORDING_TIMEOUT = 300000; // 5 minutes max recording time
+// const RECORDING_TIMEOUT = 300000; // 5 minutes max recording time - removed timeout limit
 
 // publicIdを保持するグローバル変数
 let globalPublicId = null;
@@ -44,12 +44,7 @@ function logError(error, context = '') {
 function validateRecordingState() {
   const now = Date.now();
   
-  // Check for stuck recording
-  if (isRecording && recordingStartTime && (now - recordingStartTime) > RECORDING_TIMEOUT) {
-    logError(new Error('Recording timeout exceeded'), 'validateRecordingState');
-    forceStopRecording();
-    return false;
-  }
+  // Check for stuck recording - timeout check removed
   
   // Check for orphaned windows
   if (recordingWindowId && isRecording) {
