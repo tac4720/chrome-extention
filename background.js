@@ -209,7 +209,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return false;
       
       case 'promptResponse':
-        return handlePromptResponse(message);
+        return handlePromptResponse(message, sender);
         
       default:
         logError(new Error(`Unknown action: ${message.action}`), 'onMessage');
@@ -473,16 +473,30 @@ function handleRecordingError(message) {
 /**
  * Handle Yes/No prompt response
  */
-function handlePromptResponse(message) {
+async function handlePromptResponse(message, sender) {
   try {
     console.log('[Background] Prompt response:', message.response, 'tab:', message.tabId, 'url:', message.url);
-    if (promptWindowId) {
+    // close any legacy prompt window if opened
+    if (promptWindowId) { try { chrome.windows.remove(promptWindowId); } catch (_) {} promptWindowId = null; }
+
+    if (message.response === 'yes') {
+      // 1) publicIdを取得（既存のfindAllPublicIdsを利用）
+      const publicId = await new Promise((resolve) => {
+        findAllPublicIds((list) => resolve((list[0] && list[0].public_id) || null));
+      });
+      globalPublicId = publicId;
+      console.log('[Background] Using publicId:', globalPublicId);
+      // 2) ユーザーの現在タブを http://localhost:3000 にリダイレクト（録音開始はまだ実装しない）
       try {
-        chrome.windows.remove(promptWindowId);
+        const tabId = (message.tabId) || (sender && sender.tab && sender.tab.id);
+        if (tabId) {
+          await chrome.tabs.update(tabId, { url: 'http://localhost:3000' });
+        } else {
+          await chrome.tabs.create({ url: 'http://localhost:3000' });
+        }
       } catch (e) {
-        logError(e, 'handlePromptResponse - close prompt');
+        logError(e, 'handlePromptResponse - redirect');
       }
-      promptWindowId = null;
     }
     return false;
   } catch (error) {
@@ -607,7 +621,7 @@ function getWebSocketUrlWithPublicId() {
   }
 }
 
-// ================= URL Monitoring and Prompt ================= //
+// ================= URL Monitoring and Prompt (disabled: using content script banner) ================= //
 
 // Track a small prompt window
 let promptWindowId = null;
@@ -653,11 +667,12 @@ chrome.windows.onRemoved.addListener((winId) => {
 });
 
 // Watch tab URL updates
-chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  const url = changeInfo && changeInfo.url ? changeInfo.url : (tab && tab.url);
-  if (!url) return;
-  if (!isTargetUrl(url)) return;
-  if (promptedTabIds.has(tabId)) return;
-  promptedTabIds.add(tabId);
-  openPromptWindow(tabId, url);
-});
+// Disabled because we now show an in-page sliding banner via content script
+// chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+//   const url = changeInfo && changeInfo.url ? changeInfo.url : (tab && tab.url);
+//   if (!url) return;
+//   if (!isTargetUrl(url)) return;
+//   if (promptedTabIds.has(tabId)) return;
+//   promptedTabIds.add(tabId);
+//   openPromptWindow(tabId, url);
+// });
