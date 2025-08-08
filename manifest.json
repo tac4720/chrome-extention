@@ -3,7 +3,7 @@
   "name": "Paratalk",
   "description": "Capture tab and mic audio, encode as MP3 and stream via WebSocket",
   "version": "1.0",
-  "permissions": ["cookies", "tabCapture", "activeTab", "windows"],
+  "permissions": ["cookies", "tabCapture", "activeTab", "windows", "tabs"],
   "host_permissions": ["<all_urls>"],
   "action": {
     "default_popup": "popup.html"
@@ -17,7 +17,7 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["lame.min.js", "audio-worklet.js", "offscreen.html"],
+      "resources": ["lame.min.js", "audio-worklet.js", "offscreen.html", "prompt.html", "prompt.js"],
       "matches": ["<all_urls>"]
     }
   ]

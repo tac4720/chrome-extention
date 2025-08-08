@@ -207,6 +207,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           uptime: Date.now() - lastHealthCheck
         });
         return false;
+      
+      case 'promptResponse':
+        return handlePromptResponse(message);
         
       default:
         logError(new Error(`Unknown action: ${message.action}`), 'onMessage');
@@ -468,6 +471,27 @@ function handleRecordingError(message) {
 }
 
 /**
+ * Handle Yes/No prompt response
+ */
+function handlePromptResponse(message) {
+  try {
+    console.log('[Background] Prompt response:', message.response, 'tab:', message.tabId, 'url:', message.url);
+    if (promptWindowId) {
+      try {
+        chrome.windows.remove(promptWindowId);
+      } catch (e) {
+        logError(e, 'handlePromptResponse - close prompt');
+      }
+      promptWindowId = null;
+    }
+    return false;
+  } catch (error) {
+    logError(error, 'handlePromptResponse');
+    return false;
+  }
+}
+
+/**
  * Enhanced offscreen document management with retry logic
  */
 async function ensureOffscreenDocument() {
@@ -582,3 +606,58 @@ function getWebSocketUrlWithPublicId() {
     return baseUrl;
   }
 }
+
+// ================= URL Monitoring and Prompt ================= //
+
+// Track a small prompt window
+let promptWindowId = null;
+
+// Avoid duplicate prompts per tab
+const promptedTabIds = new Set();
+
+// Decide if the URL matches target
+function isTargetUrl(url) {
+  if (!url || typeof url !== 'string') return false;
+  try {
+    const u = new URL(url);
+    if (u.protocol !== 'https:' || u.hostname !== 'meet.google.com') return false;
+    // Match /xxx-xxxx-xxx (alphabet only), optionally followed by /, query or end
+    return /^\/[a-zA-Z]{3}-[a-zA-Z]{4}-[a-zA-Z]{3}(?:\/|$)/.test(u.pathname);
+  } catch {
+    return false;
+  }
+}
+
+async function openPromptWindow(tabId, url) {
+  if (promptWindowId !== null) return; // already open
+  try {
+    const promptUrl = chrome.runtime.getURL('prompt.html') + `?tabId=${tabId}&url=${encodeURIComponent(url)}`;
+    const win = await chrome.windows.create({
+      url: promptUrl,
+      type: 'popup',
+      focused: true,
+      width: 380,
+      height: 220
+    });
+    promptWindowId = win.id;
+  } catch (e) {
+    logError(e, 'openPromptWindow');
+  }
+}
+
+// Clear when prompt window closed
+chrome.windows.onRemoved.addListener((winId) => {
+  if (promptWindowId && winId === promptWindowId) {
+    promptWindowId = null;
+  }
+});
+
+// Watch tab URL updates
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  const url = changeInfo && changeInfo.url ? changeInfo.url : (tab && tab.url);
+  if (!url) return;
+  if (!isTargetUrl(url)) return;
+  if (promptedTabIds.has(tabId)) return;
+  promptedTabIds.add(tabId);
+  openPromptWindow(tabId, url);
+});
