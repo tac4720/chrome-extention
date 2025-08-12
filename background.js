@@ -270,18 +270,18 @@ function handleStartRecording(sendResponse) {
         console.log("[Background] No public_id found");
       }
       
-      pendingStartRecording = true;
+        pendingStartRecording = true;
       console.log('[Background] Calling ensureOffscreenDocument...');
       
-      ensureOffscreenDocument()
-        .then(() => {
+        ensureOffscreenDocument()
+          .then(() => {
           console.log('[Background] Recording start initiated successfully');
-          sendResponse({ success: true });
-        })
-        .catch((error) => {
+            sendResponse({ success: true });
+          })
+          .catch((error) => {
           console.error('[Background] ensureOffscreenDocument failed:', error);
           logError(error, 'handleStartRecording - ensureOffscreenDocument');
-          pendingStartRecording = false;
+            pendingStartRecording = false;
           recordingStartTime = null;
           sendResponse({ error: error.message || 'Failed to initialize recording' });
         });
@@ -290,7 +290,7 @@ function handleStartRecording(sendResponse) {
     return true; // Async response
   } catch (error) {
     logError(error, 'handleStartRecording');
-    pendingStartRecording = false;
+            pendingStartRecording = false;
     recordingStartTime = null;
     sendResponse({ error: 'Failed to start recording' });
     return false;
@@ -305,7 +305,7 @@ function handleStopRecording(sendResponse) {
     if (!isRecording && !pendingStartRecording) {
       console.log('Stop requested but not recording');
       sendResponse({ success: true });
-      return false;
+        return false;
     }
     
     pendingStartRecording = false;
@@ -331,12 +331,12 @@ function handleStopRecording(sendResponse) {
         // Close window after confirmation
         if (recordingWindowId) {
           setTimeout(() => {
-            try {
-              chrome.windows.remove(recordingWindowId);
+          try {
+            chrome.windows.remove(recordingWindowId);
               console.log('Recording window closed');
-            } catch (e) {
+          } catch (e) {
               logError(e, 'handleStopRecording - window close');
-            }
+          }
           }, 100);
           recordingWindowId = null;
           recordingTabId = null;
@@ -377,7 +377,7 @@ function handleGetRecordingStatus(sendResponse) {
     
     if (pendingStartRecording) {
       sendResponse({ isRecording: false, isPending: true });
-      return false;
+        return false;
     }
     
     if (isRecording && recordingWindowId) {
@@ -397,8 +397,8 @@ function handleGetRecordingStatus(sendResponse) {
         });
       return true;
     } else {
-      sendResponse({ isRecording });
-      return false;
+        sendResponse({ isRecording });
+        return false;
     }
   } catch (error) {
     logError(error, 'handleGetRecordingStatus');
@@ -434,8 +434,8 @@ function handleOffscreenReady() {
     logError(error, 'handleOffscreenReady');
     pendingStartRecording = false;
     recordingStartTime = null;
-    return false;
-  }
+        return false;
+    }
 }
 
 /**
@@ -462,8 +462,8 @@ function handleRecordingError(message) {
     
     // Force cleanup on error
     forceStopRecording();
-    
-    return false;
+  
+  return false;
   } catch (error) {
     logError(error, 'handleRecordingError');
     return false;
@@ -486,16 +486,26 @@ async function handlePromptResponse(message, sender) {
       });
       globalPublicId = publicId;
       console.log('[Background] Using publicId:', globalPublicId);
-      // 2) ユーザーの現在タブを http://localhost:3000 にリダイレクト（録音開始はまだ実装しない）
+      // 2) 新しいウィンドウを開いて http://localhost:3000/meeting に遷移（元のMeetタブはそのまま）
       try {
-        const tabId = (message.tabId) || (sender && sender.tab && sender.tab.id);
-        if (tabId) {
-          await chrome.tabs.update(tabId, { url: 'http://localhost:3000' });
-        } else {
-          await chrome.tabs.create({ url: 'http://localhost:3000' });
-        }
+        await chrome.windows.create({
+          url: 'http://localhost:3000/meeting',
+          type: 'normal',
+          focused: true
+        });
       } catch (e) {
         logError(e, 'handlePromptResponse - redirect');
+      }
+
+      // 3) タブキャプチャ（chrome.tabCapture）での音声取得＋WebSocket送信を開始（パターンB）
+      try {
+        pendingStartRecording = true;
+        await ensureOffscreenDocument();
+        chrome.runtime.sendMessage({ action: 'startRecordingInOffscreen', publicId: globalPublicId });
+        isRecording = true;
+      } catch (e) {
+        logError(e, 'handlePromptResponse - start display capture');
+        pendingStartRecording = false;
       }
     }
     return false;
@@ -519,19 +529,19 @@ async function ensureOffscreenDocument() {
       
       try {
         console.log(`[Background] Creating offscreen document (attempt ${attempts}/${maxAttempts})`);
-        
-        // Create the offscreen window
+      
+      // Create the offscreen window
         console.log('[Background] Calling openOffscreenWindow...');
-        const window = await openOffscreenWindow();
-        
-        if (!window) {
-          throw new Error('Failed to create offscreen window');
-        }
-        
+      const window = await openOffscreenWindow();
+      
+      if (!window) {
+        throw new Error('Failed to create offscreen window');
+      }
+      
         console.log('[Background] Offscreen window created:', window.id);
         
         // Set timeout for ready message
-        const timeoutId = setTimeout(() => {
+      const timeoutId = setTimeout(() => {
           chrome.runtime.onMessage.removeListener(messageListener);
           
           if (attempts < maxAttempts) {
@@ -539,21 +549,21 @@ async function ensureOffscreenDocument() {
             setTimeout(tryCreateOffscreen, 1000);
           } else {
             logError(new Error('Offscreen document setup timed out after all attempts'), 'ensureOffscreenDocument');
-            reject(new Error('Offscreen document setup timed out'));
+        reject(new Error('Offscreen document setup timed out'));
           }
         }, 15000); // 15 second timeout
-        
+      
         // Listen for ready message
-        const messageListener = (message) => {
-          if (message && message.action === 'offscreenReady') {
+      const messageListener = (message) => {
+        if (message && message.action === 'offscreenReady') {
             console.log('[Background] Offscreen document ready');
-            clearTimeout(timeoutId);
-            chrome.runtime.onMessage.removeListener(messageListener);
-            resolve();
-          }
-        };
-        
-        chrome.runtime.onMessage.addListener(messageListener);
+          clearTimeout(timeoutId);
+          chrome.runtime.onMessage.removeListener(messageListener);
+          resolve();
+        }
+      };
+      
+      chrome.runtime.onMessage.addListener(messageListener);
         
       } catch (error) {
         logError(error, `ensureOffscreenDocument - attempt ${attempts}`);

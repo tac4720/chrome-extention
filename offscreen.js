@@ -215,7 +215,7 @@
         logError(error, 'WebSocket initialization failed, continuing without it', 'warning');
       }
       
-      // Start tab capture
+      // Start capture using chrome.tabCapture (pattern B)
       await initializeTabCapture();
       
     } catch (error) {
@@ -229,43 +229,46 @@
   /**
    * Initialize tab capture and audio processing
    */
+  /**
+   * Initialize tab capture via chrome.tabCapture (current tab of offscreen window)
+   */
   async function initializeTabCapture() {
     return new Promise((resolve, reject) => {
       // Continue even if WebSocket is not connected
       if (ws && ws.readyState !== WebSocket.OPEN) {
         console.log('[Offscreen] WebSocket not connected, recording without streaming');
       }
-      
+
       console.log('[Offscreen] Starting tab capture...');
-      
+
       chrome.tabCapture.capture({ audio: true, video: false }, async (stream) => {
         try {
           if (chrome.runtime.lastError || !stream) {
             throw new Error(chrome.runtime.lastError?.message || 'No stream returned');
           }
-          
+
           console.log('[Offscreen] Tab capture successful');
           tabStream = stream;
-          
+
           // Validate stream
           const tracks = stream.getTracks();
           if (tracks.length === 0) {
             throw new Error('No audio tracks in captured stream');
           }
-          
+
           console.log('[Offscreen] Stream tracks:', tracks.map(t => ({
             kind: t.kind,
             enabled: t.enabled,
             readyState: t.readyState,
             id: t.id
           })));
-          
+
           // Initialize audio processing
           await setupAudioProcessing();
-          
+
           console.log('[Offscreen] Recording started successfully');
           resolve();
-          
+
         } catch (error) {
           logError(error, 'initializeTabCapture', 'critical');
           reject(error);
@@ -273,6 +276,11 @@
       });
     });
   }
+
+  /**
+   * Initialize display capture (user selects a tab/window), use audio track(s)
+   */
+  // getDisplayMedia is not used in pattern B
   
   /**
    * Setup audio processing pipeline with error handling
