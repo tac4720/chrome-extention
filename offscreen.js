@@ -4,6 +4,7 @@
   let ws, tabStream, micStream, mp3Encoder;
   let keepAliveOsc, keepAliveGain, dummyAudio;
   let receivedPublicId = null;
+  let captureTabId = null;
   
   // State management
   let isInitialized = false;
@@ -193,27 +194,30 @@
         logError(new Error('Recording already in progress'), 'startRecording');
         return;
       }
-      
-      console.log('[Offscreen] Starting recording with publicId:', receivedPublicId);
-      recordingStartTime = Date.now();
-      isRecording = true;
-      
-      // Try to get microphone access (optional)
-      try {
-        console.log('[Offscreen] Attempting microphone access...');
-        micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        console.log('[Offscreen] Microphone access granted');
-      } catch (e) {
-        console.warn('[Offscreen] Microphone access denied, using tab audio only:', e.message);
-        // This is expected in most cases due to permissions policy
+
+      if (!receivedPublicId) {
+        console.warn('[Offscreen] publicId is missing. Aborting start and requesting login.');
+        try { chrome.runtime.sendMessage({ action: 'loginRequired' }); } catch (_) {}
+        return;
       }
+
+      console.log('[Offscreen] Starting recording with publicId:', receivedPublicId);
       
-      // Initialize WebSocket connection (non-blocking)
+      // Note: Microphone access is now handled in initializeTabCapture()
+      // which uses the new dual audio capture system
+      console.log('[Offscreen] Using enhanced dual audio capture system...');
+      
+      // Initialize WebSocket connection first; if it fails, do not proceed
       try {
         await initializeWebSocket();
       } catch (error) {
-        logError(error, 'WebSocket initialization failed, continuing without it', 'warning');
+        logError(error, 'WebSocket initialization failed', 'warning');
+        try { chrome.runtime.sendMessage({ action: 'loginRequired' }); } catch (_) {}
+        return;
       }
+
+      recordingStartTime = Date.now();
+      isRecording = true;
       
       // Start capture using chrome.tabCapture (pattern B)
       await initializeTabCapture();
@@ -230,57 +234,101 @@
    * Initialize tab capture and audio processing
    */
   /**
-   * Initialize tab capture via chrome.tabCapture (current tab of offscreen window)
+   * Initialize audio capture using getDisplayMedia and getUserMedia
    */
   async function initializeTabCapture() {
-    return new Promise((resolve, reject) => {
-      // Continue even if WebSocket is not connected
-      if (ws && ws.readyState !== WebSocket.OPEN) {
-        console.log('[Offscreen] WebSocket not connected, recording without streaming');
+    try {
+      console.log('[Offscreen] Starting audio capture with getDisplayMedia...');
+      
+      // Try to get microphone access (optional)
+      try {
+        console.log('[Offscreen] Attempting microphone access...');
+        micStream = await navigator.mediaDevices.getUserMedia({ 
+          audio: {
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: false,
+            sampleRate: CONFIG.SAMPLE_RATE
+          }
+        });
+        console.log('[Offscreen] Microphone access granted');
+      } catch (e) {
+        console.warn('[Offscreen] Microphone access denied, using display audio only:', e.message);
+        micStream = null;
       }
+      
+      // Use getDisplayMedia for display audio
+      tabStream = await initializeDisplayMediaCapture();
+      console.log('[Offscreen] Display media capture successful');
 
-      console.log('[Offscreen] Starting tab capture...');
+      // Initialize audio processing with the captured streams
+      await setupAudioProcessing();
 
-      chrome.tabCapture.capture({ audio: true, video: false }, async (stream) => {
-        try {
-          if (chrome.runtime.lastError || !stream) {
-            throw new Error(chrome.runtime.lastError?.message || 'No stream returned');
-          }
+      console.log('[Offscreen] Audio capture setup complete');
 
-          console.log('[Offscreen] Tab capture successful');
-          tabStream = stream;
-
-          // Validate stream
-          const tracks = stream.getTracks();
-          if (tracks.length === 0) {
-            throw new Error('No audio tracks in captured stream');
-          }
-
-          console.log('[Offscreen] Stream tracks:', tracks.map(t => ({
-            kind: t.kind,
-            enabled: t.enabled,
-            readyState: t.readyState,
-            id: t.id
-          })));
-
-          // Initialize audio processing
-          await setupAudioProcessing();
-
-          console.log('[Offscreen] Recording started successfully');
-          resolve();
-
-        } catch (error) {
-          logError(error, 'initializeTabCapture', 'critical');
-          reject(error);
-        }
-      });
-    });
+    } catch (error) {
+      logError(error, 'initializeTabCapture', 'critical');
+      throw error;
+    }
   }
 
+
+
   /**
-   * Initialize display capture (user selects a tab/window), use audio track(s)
+   * Initialize display media capture using getDisplayMedia
    */
-  // getDisplayMedia is not used in pattern B
+  async function initializeDisplayMediaCapture() {
+    console.log('[Offscreen] Initializing display media capture...');
+    
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+      throw new Error('getDisplayMedia not supported in this browser');
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia({
+        video: false,
+        audio: {
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+          sampleRate: CONFIG.SAMPLE_RATE
+        }
+      });
+
+      // Validate stream has audio tracks
+      const audioTracks = stream.getAudioTracks();
+      if (audioTracks.length === 0) {
+        stream.getTracks().forEach(track => track.stop());
+        throw new Error('No audio tracks in display stream. Please make sure to share audio when prompted.');
+      }
+
+      console.log('[Offscreen] Display media stream audio tracks:', audioTracks.map(t => ({
+        kind: t.kind,
+        enabled: t.enabled,
+        readyState: t.readyState,
+        label: t.label,
+        id: t.id
+      })));
+
+      return stream;
+
+    } catch (error) {
+      console.error('[Offscreen] getDisplayMedia error:', error);
+      
+      // Provide user-friendly error messages
+      if (error.name === 'NotAllowedError') {
+        throw new Error('Screen sharing permission denied. Please allow screen sharing and make sure to include audio.');
+      } else if (error.name === 'NotSupportedError') {
+        throw new Error('Screen sharing is not supported in this browser.');
+      } else if (error.name === 'AbortError') {
+        throw new Error('Screen sharing was cancelled by the user.');
+      } else {
+        throw new Error(`Screen sharing failed: ${error.message}`);
+      }
+    }
+  }
+
+
   
   /**
    * Setup audio processing pipeline with error handling
@@ -421,29 +469,88 @@
   }
   
   /**
-   * Setup audio routing between sources and processors
+   * Setup enhanced audio routing with proper mixing and gain control
    */
   function setupAudioRouting(processor, mediaDestination) {
-    // Create source nodes
-    tabSourceNode = audioContext.createMediaStreamSource(tabStream);
-    console.log('[Offscreen] Created tab source node');
+    console.log('[Offscreen] Setting up enhanced audio routing...');
+    
+    // Create gain nodes for volume control
+    const tabGainNode = audioContext.createGain();
+    const micGainNode = audioContext.createGain();
+    const masterGainNode = audioContext.createGain();
+    
+    // Set initial gain levels (can be adjusted later)
+    tabGainNode.gain.value = 0.8; // Slightly reduce tab audio to prevent clipping
+    micGainNode.gain.value = 1.0; // Keep microphone at full volume
+    masterGainNode.gain.value = 1.0; // Master volume
     
     // Create merger for combining audio sources
-    const merger = audioContext.createChannelMerger(1);
-    tabSourceNode.connect(merger, 0, 0);
+    const merger = audioContext.createChannelMerger(2); // Use 2 channels for better separation initially
+    const mixerGain = audioContext.createGain();
+    mixerGain.gain.value = 0.7; // Prevent clipping when mixing
     
-    if (micStream) {
-      console.log('[Offscreen] Setting up microphone source...');
-      micSourceNode = audioContext.createMediaStreamSource(micStream);
-      micSourceNode.connect(merger, 0, 0);
-      console.log('[Offscreen] Microphone connected');
+    let sourcesConnected = 0;
+    
+    // Setup display/tab audio source
+    if (tabStream) {
+      console.log('[Offscreen] Setting up display audio source...');
+      tabSourceNode = audioContext.createMediaStreamSource(tabStream);
+      
+      // Connect: tabSource -> tabGain -> merger (channel 0)
+      tabSourceNode.connect(tabGainNode);
+      tabGainNode.connect(merger, 0, 0);
+      sourcesConnected++;
+      
+      console.log('[Offscreen] Display audio connected to mixer');
     }
     
-    // Connect to processor
-    merger.connect(processor);
+    // Setup microphone audio source
+    if (micStream) {
+      console.log('[Offscreen] Setting up microphone audio source...');
+      micSourceNode = audioContext.createMediaStreamSource(micStream);
+      
+      // Connect: micSource -> micGain -> merger (channel 1)
+      micSourceNode.connect(micGainNode);
+      micGainNode.connect(merger, 0, 1);
+      sourcesConnected++;
+      
+      console.log('[Offscreen] Microphone audio connected to mixer');
+    }
+    
+    if (sourcesConnected === 0) {
+      throw new Error('No audio sources available for routing');
+    }
+    
+    // Create a channel splitter to convert stereo to mono for processing
+    const splitter = audioContext.createChannelSplitter(2);
+    const monoMerger = audioContext.createChannelMerger(1);
+    
+    // Connect the routing chain
+    merger.connect(mixerGain);
+    mixerGain.connect(splitter);
+    
+    // Mix both channels to mono for processing
+    splitter.connect(monoMerger, 0, 0); // Left channel
+    splitter.connect(monoMerger, 1, 0); // Right channel (mixed with left)
+    
+    // Apply master gain and connect to processor
+    monoMerger.connect(masterGainNode);
+    masterGainNode.connect(processor);
     processor.connect(mediaDestination);
     
-    console.log('[Offscreen] Audio routing complete');
+    // Store gain nodes for potential runtime adjustment
+    if (!window.audioGainControls) {
+      window.audioGainControls = {};
+    }
+    window.audioGainControls.tabGain = tabGainNode;
+    window.audioGainControls.micGain = micGainNode;
+    window.audioGainControls.masterGain = masterGainNode;
+    
+    console.log('[Offscreen] Enhanced audio routing complete:', {
+      displayAudio: !!tabStream,
+      microphoneAudio: !!micStream,
+      sourcesConnected
+    });
   }
   
   /**
@@ -478,7 +585,7 @@
   }
   
   /**
-   * Process audio buffer and send to WebSocket
+   * Process mixed audio buffer and send to WebSocket backend
    */
   function processAudioBuffer(buffer) {
     try {
@@ -486,16 +593,85 @@
         return;
       }
       
-      const samples = floatTo16BitPCM(buffer);
+      // Validate buffer
+      if (!buffer || buffer.length === 0) {
+        console.warn('[Offscreen] Empty audio buffer received');
+        return;
+      }
+      
+      // Apply normalization to prevent clipping in the mixed audio
+      const normalizedBuffer = normalizeAudioBuffer(buffer);
+      
+      // Convert to 16-bit PCM for MP3 encoding
+      const samples = floatTo16BitPCM(normalizedBuffer);
+      
+      // Encode to MP3
       const mp3buf = mp3Encoder.encodeBuffer(samples);
       
+      // Send to backend via WebSocket
       if (mp3buf.length > 0 && ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(mp3buf.buffer);
-        lastHeartbeat = Date.now();
+        try {
+          ws.send(mp3buf.buffer);
+          lastHeartbeat = Date.now();
+          
+          // Log transmission stats periodically
+          if (Date.now() - lastHeartbeat > 5000) { // Every 5 seconds
+            console.log('[Offscreen] Audio transmission stats:', {
+              bufferSize: buffer.length,
+              mp3Size: mp3buf.length,
+              sampleRate: CONFIG.SAMPLE_RATE,
+              bitrate: CONFIG.MP3_BITRATE
+            });
+          }
+        } catch (wsError) {
+          logError(wsError, 'processAudioBuffer - WebSocket send failed');
+          // Attempt reconnection if send fails
+          if (ws.readyState !== WebSocket.OPEN) {
+            console.warn('[Offscreen] WebSocket disconnected, attempting reconnection...');
+            attemptReconnect();
+          }
+        }
+      } else if (!ws || ws.readyState !== WebSocket.OPEN) {
+        console.warn('[Offscreen] WebSocket not ready, audio data dropped');
+        
+        // Try to reconnect if recording is active
+        if (isRecording && (!ws || ws.readyState === WebSocket.CLOSED)) {
+          attemptReconnect();
+        }
       }
     } catch (error) {
       logError(error, 'processAudioBuffer');
     }
+  }
+  
+  /**
+   * Normalize audio buffer to prevent clipping and improve quality
+   */
+  function normalizeAudioBuffer(buffer) {
+    if (!buffer || buffer.length === 0) return buffer;
+    
+    // Find peak amplitude
+    let maxAmplitude = 0;
+    for (let i = 0; i < buffer.length; i++) {
+      const amplitude = Math.abs(buffer[i]);
+      if (amplitude > maxAmplitude) {
+        maxAmplitude = amplitude;
+      }
+    }
+    
+    // Apply normalization if needed (prevent clipping while preserving dynamics)
+    if (maxAmplitude > 0.95) {
+      const normalizationFactor = 0.95 / maxAmplitude;
+      const normalizedBuffer = new Float32Array(buffer.length);
+      
+      for (let i = 0; i < buffer.length; i++) {
+        normalizedBuffer[i] = buffer[i] * normalizationFactor;
+      }
+      
+      return normalizedBuffer;
+    }
+    
+    return buffer;
   }
 
   /**
@@ -712,8 +888,9 @@
       
       switch (message.action) {
         case 'startRecordingInOffscreen':
-          console.log('[Offscreen] Starting recording with publicId:', message.publicId);
+          console.log('[Offscreen] Starting recording with publicId:', message.publicId, 'tabId:', message.tabId);
           receivedPublicId = message.publicId;
+          captureTabId = typeof message.tabId === 'number' ? message.tabId : null;
           
           startRecording()
             .then(() => {

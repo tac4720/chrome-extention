@@ -10,6 +10,7 @@ const MAX_RECONNECT_ATTEMPTS = 3;
 
 // publicIdを保持するグローバル変数
 let globalPublicId = null;
+let captureTargetTabId = null;
 
 // Health check and monitoring
 let healthCheckInterval = null;
@@ -119,50 +120,83 @@ function startHealthMonitoring() {
 startHealthMonitoring();
 
 /**
- * Open offscreen.html in a hidden popup window to process audio
+ * Create offscreen document using Chrome's offscreen API
  */
 async function openOffscreenWindow() {
   try {
-    // Check if window is already open
-    if (recordingWindowId !== null) {
-      try {
-        const existingWin = await chrome.windows.get(recordingWindowId);
-        if (existingWin) return; // Window already exists
-      } catch (e) {
-        // Window doesn't exist, continue to create a new one
-        recordingWindowId = null;
-      }
+    // Check if chrome.offscreen API is available
+    if (!chrome.offscreen || typeof chrome.offscreen.createDocument !== 'function') {
+      console.warn('[Background] chrome.offscreen API not available, using fallback method');
+      throw new Error('chrome.offscreen API not available');
     }
     
-    const url = chrome.runtime.getURL('offscreen.html');
-    const win = await chrome.windows.create({
-      url,
-      type: 'popup',
-      focused: false,
-      width: 100,
-      height: 100,
-      left: 0,
-      top: 0
+    // Check if chrome.runtime.getContexts is available
+    if (chrome.runtime.getContexts && typeof chrome.runtime.getContexts === 'function') {
+      // Check if offscreen document already exists
+      const existingContexts = await chrome.runtime.getContexts({
+        contextTypes: ['OFFSCREEN_DOCUMENT']
+      });
+      
+      if (existingContexts.length > 0) {
+        console.log('[Background] Offscreen document already exists');
+        return existingContexts[0];
+      }
+    } else {
+      console.warn('[Background] chrome.runtime.getContexts not available, skipping existence check');
+    }
+    
+    // Create offscreen document
+    console.log('[Background] Creating offscreen document...');
+    await chrome.offscreen.createDocument({
+      url: 'offscreen.html',
+      reasons: ['USER_MEDIA'],
+      justification: 'Recording audio from tab and microphone'
     });
     
-    recordingWindowId = win.id;
-    if (win.tabs && win.tabs.length > 0) {
-      recordingTabId = win.tabs[0].id;
-    }
+    console.log('[Background] Offscreen document created successfully');
+    return { id: 'offscreen' }; // Mock window object
     
-    // Minimize after a short delay to ensure it loads properly
-    setTimeout(() => {
-      try {
-        chrome.windows.update(recordingWindowId, { state: 'minimized' });
-      } catch (e) {
-        console.error('Error minimizing window:', e);
-      }
-    }, 500);
-    
-    return win;
   } catch (e) {
-    console.error('Error opening offscreen window:', e);
-    return null;
+    console.error('Error creating offscreen document:', e);
+    
+    // Fallback to popup window method
+    console.log('[Background] Falling back to popup window method...');
+    try {
+      const url = chrome.runtime.getURL('offscreen.html');
+      console.log('[Background] Attempting to create window with URL:', url);
+      
+      const win = await chrome.windows.create({
+        url,
+        type: 'popup',
+        focused: true,
+        width: 800,
+        height: 600,
+        left: 50,
+        top: 50,
+        state: 'normal'
+      });
+      
+      // Force window to front
+      setTimeout(async () => {
+        try {
+          await chrome.windows.update(win.id, { focused: true });
+          console.log('[Background] Window forced to front');
+        } catch (e) {
+          console.error('Error focusing window:', e);
+        }
+      }, 100);
+      
+      console.log('[Background] Window creation result:', win);
+      recordingWindowId = win.id;
+      if (win.tabs && win.tabs.length > 0) {
+        recordingTabId = win.tabs[0].id;
+      }
+      
+      return win;
+    } catch (fallbackError) {
+      console.error('Fallback window creation failed:', fallbackError);
+      return null;
+    }
   }
 }
 // Handle messages from popup and offscreen window
@@ -210,6 +244,30 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       
       case 'promptResponse':
         return handlePromptResponse(message, sender);
+      
+      case 'loginRequired':
+        try {
+          showLoginRequiredBanner();
+        } catch (e) {
+          logError(e, 'onMessage - loginRequired');
+        }
+        return false;
+
+      case 'focusOrOpenParatalk':
+        try {
+          focusOrOpenParatalk();
+        } catch (e) {
+          logError(e, 'onMessage - focusOrOpenParatalk');
+        }
+        return false;
+
+      case 'openParatalkMeeting':
+        try {
+          focusOrOpenParatalkMeeting();
+        } catch (e) {
+          logError(e, 'onMessage - openParatalkMeeting');
+        }
+        return false;
         
       default:
         logError(new Error(`Unknown action: ${message.action}`), 'onMessage');
@@ -250,6 +308,36 @@ function handleStartRecording(sendResponse) {
     resetRecordingState();
     recordingStartTime = Date.now();
     
+    // Determine capture target tab: prefer Meet tab in current window, fallback to active tab
+    try {
+      chrome.tabs.query({ currentWindow: true, url: 'https://meet.google.com/*' }, (meetTabs) => {
+        try {
+          let target = null;
+          if (Array.isArray(meetTabs) && meetTabs.length > 0) {
+            target = meetTabs.find(t => t.active) || meetTabs[0];
+          }
+          if (target && target.id) {
+            captureTargetTabId = target.id;
+            console.log('[Background] Selected captureTargetTabId (meet):', captureTargetTabId);
+          } else {
+            chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+              try {
+                const activeTab = tabs && tabs[0];
+                captureTargetTabId = activeTab && activeTab.id ? activeTab.id : null;
+                console.log('[Background] Selected captureTargetTabId (active):', captureTargetTabId);
+              } catch (e) {
+                logError(e, 'handleStartRecording - select active tab');
+              }
+            });
+          }
+        } catch (e) {
+          logError(e, 'handleStartRecording - select meet tab');
+        }
+      });
+    } catch (e) {
+      logError(e, 'handleStartRecording - tabs.query meet');
+    }
+
     // Find public IDs with timeout
     const publicIdTimeout = setTimeout(() => {
       logError(new Error('Public ID search timeout'), 'handleStartRecording');
@@ -268,6 +356,12 @@ function handleStartRecording(sendResponse) {
       } else {
         globalPublicId = null;
         console.log("[Background] No public_id found");
+        // Show login required banner and abort start
+        try { showLoginRequiredBanner(); } catch (e) { logError(e, 'handleStartRecording - showLoginRequiredBanner'); }
+        pendingStartRecording = false;
+        recordingStartTime = null;
+        sendResponse({ error: 'loginRequired' });
+        return false;
       }
       
         pendingStartRecording = true;
@@ -410,21 +504,78 @@ function handleGetRecordingStatus(sendResponse) {
 /**
  * Handle offscreen ready notification
  */
-function handleOffscreenReady() {
+async function handleOffscreenReady() {
   try {
     console.log('Offscreen document ready');
     if (pendingStartRecording) {
-      console.log('Sending startRecordingInOffscreen message with publicId:', globalPublicId);
-      
       try {
-        chrome.runtime.sendMessage({ 
-          action: 'startRecordingInOffscreen', 
-          publicId: globalPublicId 
-        });
-        pendingStartRecording = false;
-        isRecording = true;
+        // Bring target Meet tab to front so fallback capture() can target it if needed
+        if (captureTargetTabId) {
+          const tab = await chrome.tabs.get(captureTargetTabId).catch(() => null);
+          if (tab && tab.windowId) {
+            try { await chrome.windows.update(tab.windowId, { focused: true }); } catch (e) { logError(e, 'handleOffscreenReady - focus window'); }
+            try { await chrome.tabs.update(captureTargetTabId, { active: true }); } catch (e) { logError(e, 'handleOffscreenReady - activate tab'); }
+            // small delay to ensure focus takes effect before capture
+            await new Promise(r => setTimeout(r, 150));
+          }
+        }
+
+        console.log('Sending startRecordingInOffscreen message with publicId:', globalPublicId, 'tabId:', captureTargetTabId);
+        
+        // Send message with better error handling
+        try {
+          await new Promise((resolve, reject) => {
+            chrome.runtime.sendMessage({ 
+              action: 'startRecordingInOffscreen', 
+              publicId: globalPublicId,
+              tabId: captureTargetTabId
+            }, (response) => {
+              if (chrome.runtime.lastError) {
+                const error = chrome.runtime.lastError;
+                if (error.message && error.message.includes('Receiving end does not exist')) {
+                  console.warn('[Background] Offscreen document not ready yet, retrying...');
+                  // Retry after a short delay
+                  setTimeout(() => {
+                    chrome.runtime.sendMessage({ 
+                      action: 'startRecordingInOffscreen', 
+                      publicId: globalPublicId,
+                      tabId: captureTargetTabId
+                    }, () => {
+                      if (chrome.runtime.lastError) {
+                        reject(new Error(`Message send failed: ${chrome.runtime.lastError.message}`));
+                      } else {
+                        resolve();
+                      }
+                    });
+                  }, 500);
+                } else {
+                  reject(new Error(`Message send failed: ${error.message}`));
+                }
+              } else {
+                resolve(response);
+              }
+            });
+          });
+          
+          pendingStartRecording = false;
+          isRecording = true;
+          console.log('[Background] Recording start message sent successfully');
+          
+        } catch (messageError) {
+          logError(messageError, 'handleOffscreenReady - message send failed');
+          pendingStartRecording = false;
+          recordingStartTime = null;
+          
+          // Try to restart offscreen document
+          console.warn('[Background] Attempting to recreate offscreen document...');
+          try {
+            await ensureOffscreenDocument();
+          } catch (recreateError) {
+            logError(recreateError, 'handleOffscreenReady - recreate offscreen failed');
+          }
+        }
       } catch (e) {
-        logError(e, 'handleOffscreenReady - message send');
+        logError(e, 'handleOffscreenReady - general error');
         pendingStartRecording = false;
         recordingStartTime = null;
       }
@@ -434,8 +585,8 @@ function handleOffscreenReady() {
     logError(error, 'handleOffscreenReady');
     pendingStartRecording = false;
     recordingStartTime = null;
-        return false;
-    }
+    return false;
+  }
 }
 
 /**
@@ -458,14 +609,61 @@ function handleRecordingStopped() {
 function handleRecordingError(message) {
   try {
     const error = new Error(message.error || 'Unknown recording error');
+    const errorDetails = message.details || {};
+    
     logError(error, 'Recording error from offscreen');
+    console.log('[Background] Error details:', errorDetails);
+    
+    // Provide specific guidance based on error type
+    if (error.message.includes('activeTab') || error.message.includes('Permission')) {
+      console.warn('[Background] Permission error detected - user needs to grant permissions');
+      
+      // Send notification to popup if available
+      try {
+        chrome.runtime.sendMessage({
+          action: 'showUserGuidance',
+          message: errorDetails.userGuidance || 'Please allow screen sharing and microphone access when prompted.',
+          type: 'permission'
+        }).catch(() => {}); // Ignore if popup not available
+      } catch (e) {
+        // Ignore messaging errors
+      }
+    } else if (error.message.includes('No audio sources')) {
+      console.warn('[Background] No audio sources available - user needs to enable audio');
+      
+      try {
+        chrome.runtime.sendMessage({
+          action: 'showUserGuidance',
+          message: 'No audio sources detected. Please ensure your browser allows screen sharing with audio.',
+          type: 'audio'
+        }).catch(() => {});
+      } catch (e) {
+        // Ignore messaging errors
+      }
+    } else if (error.message.includes('Chrome pages cannot be captured')) {
+      console.warn('[Background] Chrome internal page - cannot capture');
+      
+      try {
+        chrome.runtime.sendMessage({
+          action: 'showUserGuidance',
+          message: 'Cannot capture Chrome internal pages. Please navigate to a regular webpage.',
+          type: 'page'
+        }).catch(() => {});
+      } catch (e) {
+        // Ignore messaging errors
+      }
+    }
     
     // Force cleanup on error
     forceStopRecording();
+    
+    // Reset reconnect attempts for next try
+    reconnectAttempts = 0;
   
-  return false;
+    return false;
   } catch (error) {
     logError(error, 'handleRecordingError');
+    forceStopRecording();
     return false;
   }
 }
@@ -480,16 +678,27 @@ async function handlePromptResponse(message, sender) {
     if (promptWindowId) { try { chrome.windows.remove(promptWindowId); } catch (_) {} promptWindowId = null; }
 
     if (message.response === 'yes') {
+      // Set capture target tab from the sender tab (Meet tab)
+      try {
+        captureTargetTabId = sender && sender.tab && sender.tab.id ? sender.tab.id : null;
+        console.log('[Background] captureTargetTabId from prompt:', captureTargetTabId);
+      } catch (e) {
+        logError(e, 'handlePromptResponse - captureTargetTabId from sender');
+      }
       // 1) publicIdを取得（既存のfindAllPublicIdsを利用）
       const publicId = await new Promise((resolve) => {
         findAllPublicIds((list) => resolve((list[0] && list[0].public_id) || null));
       });
       globalPublicId = publicId;
       console.log('[Background] Using publicId:', globalPublicId);
+      if (!globalPublicId) {
+        try { showLoginRequiredBanner(); } catch (e) { logError(e, 'handlePromptResponse - showLoginRequiredBanner'); }
+        return false;
+      }
       // 2) 新しいウィンドウを開いて http://localhost:3000/meeting に遷移（元のMeetタブはそのまま）
       try {
         await chrome.windows.create({
-          url: 'http://localhost:3000/meeting',
+          url: 'http://app.paratalk.jp/meeting',
           type: 'normal',
           focused: true
         });
@@ -501,7 +710,7 @@ async function handlePromptResponse(message, sender) {
       try {
         pendingStartRecording = true;
         await ensureOffscreenDocument();
-        chrome.runtime.sendMessage({ action: 'startRecordingInOffscreen', publicId: globalPublicId });
+        chrome.runtime.sendMessage({ action: 'startRecordingInOffscreen', publicId: globalPublicId, tabId: captureTargetTabId });
         isRecording = true;
       } catch (e) {
         logError(e, 'handlePromptResponse - start display capture');
@@ -512,6 +721,68 @@ async function handlePromptResponse(message, sender) {
   } catch (error) {
     logError(error, 'handlePromptResponse');
     return false;
+  }
+}
+
+/**
+ * Show a login-required banner on the active Meet tab
+ */
+function showLoginRequiredBanner() {
+  try {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      const activeTab = tabs && tabs[0];
+      if (activeTab && activeTab.id) {
+        try {
+          chrome.tabs.sendMessage(activeTab.id, { action: 'showLoginRequired' });
+        } catch (e) {
+          logError(e, 'showLoginRequiredBanner - sendMessage activeTab');
+        }
+      }
+    });
+  } catch (e) {
+    logError(e, 'showLoginRequiredBanner');
+  }
+}
+
+/**
+ * Focus an existing Paratalk tab or open a new one
+ */
+function focusOrOpenParatalk() {
+  try {
+    chrome.tabs.query({}, (tabs) => {
+      const targetUrl = 'https://app.paratalk.jp/login';
+      const sitePrefix = 'https://app.paratalk.jp/';
+      const existing = tabs.find(t => typeof t.url === 'string' && t.url.startsWith(sitePrefix));
+      if (existing) {
+        try { chrome.windows.update(existing.windowId, { focused: true }); } catch (e) { logError(e, 'focusOrOpenParatalk - focus window'); }
+        try { chrome.tabs.update(existing.id, { active: true, url: targetUrl }); } catch (e) { logError(e, 'focusOrOpenParatalk - activate tab'); }
+      } else {
+        try { chrome.tabs.create({ url: targetUrl, active: true }); } catch (e) { logError(e, 'focusOrOpenParatalk - open new'); }
+      }
+    });
+  } catch (e) {
+    logError(e, 'focusOrOpenParatalk');
+  }
+}
+
+/**
+ * Focus or open the Paratalk meeting page
+ */
+function focusOrOpenParatalkMeeting() {
+  try {
+    chrome.tabs.query({}, (tabs) => {
+      const targetUrl = 'https://app.paratalk.jp/meeting';
+      const sitePrefix = 'https://app.paratalk.jp/';
+      const existing = tabs.find(t => typeof t.url === 'string' && t.url.startsWith(sitePrefix));
+      if (existing) {
+        try { chrome.windows.update(existing.windowId, { focused: true }); } catch (e) { logError(e, 'focusOrOpenParatalkMeeting - focus window'); }
+        try { chrome.tabs.update(existing.id, { active: true, url: targetUrl }); } catch (e) { logError(e, 'focusOrOpenParatalkMeeting - activate tab'); }
+      } else {
+        try { chrome.tabs.create({ url: targetUrl, active: true }); } catch (e) { logError(e, 'focusOrOpenParatalkMeeting - open new'); }
+      }
+    });
+  } catch (e) {
+    logError(e, 'focusOrOpenParatalkMeeting');
   }
 }
 
@@ -595,12 +866,31 @@ function findAllPublicIds(callback) {
         if (--pending === 0) callback(results);
         return;
       }
-      chrome.cookies.get({url: tab.url, name: "public_id"}, function(cookie) {
-        if (cookie) {
-          results.push({tabId: tab.id, url: tab.url, public_id: cookie.value});
-        }
+      let urlObj;
+      try {
+        urlObj = new URL(tab.url);
+      } catch (_) {
         if (--pending === 0) callback(results);
-      });
+        return;
+      }
+      // Only check cookies on http(s) paratalk domains
+      const isHttp = urlObj.protocol === 'http:' || urlObj.protocol === 'https:';
+      const isParatalk = /\.paratalk\.jp$/.test(urlObj.hostname) || urlObj.hostname === 'paratalk.jp' || urlObj.hostname === 'app.paratalk.jp';
+      if (!isHttp || !isParatalk) {
+        if (--pending === 0) callback(results);
+        return;
+      }
+      try {
+        chrome.cookies.get({url: tab.url, name: "public_id"}, function(cookie) {
+          if (cookie) {
+            results.push({tabId: tab.id, url: tab.url, public_id: cookie.value});
+          }
+          if (--pending === 0) callback(results);
+        });
+      } catch (e) {
+        logError(e, 'findAllPublicIds - cookies.get');
+        if (--pending === 0) callback(results);
+      }
     });
   });
 }
@@ -610,7 +900,7 @@ chrome.runtime.onStartup.addListener(() => {
   findAllPublicIds((publicIds) => {
     if (publicIds.length > 0) {
       // 最初に見つかったpublicIdをグローバル変数にセット
-      globalPublicId = publicIds[0].publicId;
+      globalPublicId = publicIds[0].public_id;
       console.log("[onStartup] publicId一覧:", publicIds);
       console.log("[onStartup] 最初に見つかったpublicId:", globalPublicId);
     } else {

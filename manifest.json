@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "Paratalk",
-  "description": "Capture tab and mic audio, encode as MP3 and stream via WebSocket",
+  "description": "Capture screen and mic audio using getDisplayMedia, encode as MP3 and stream via WebSocket",
   "version": "1.0",
-  "permissions": ["cookies", "tabCapture", "activeTab", "windows", "tabs"],
+  "permissions": ["cookies", "activeTab", "windows", "tabs"],
   "host_permissions": ["<all_urls>"],
   "action": {
     "default_popup": "popup.html"
