@@ -685,20 +685,11 @@ async function handlePromptResponse(message, sender) {
       } catch (e) {
         logError(e, 'handlePromptResponse - captureTargetTabId from sender');
       }
-      // 1) publicIdを取得（既存のfindAllPublicIdsを利用）
-      const publicId = await new Promise((resolve) => {
-        findAllPublicIds((list) => resolve((list[0] && list[0].public_id) || null));
-      });
-      globalPublicId = publicId;
-      console.log('[Background] Using publicId:', globalPublicId);
-      if (!globalPublicId) {
-        try { showLoginRequiredBanner(); } catch (e) { logError(e, 'handlePromptResponse - showLoginRequiredBanner'); }
-        return false;
-      }
-      // 2) 新しいウィンドウを開いて http://localhost:3000/meeting に遷移（元のMeetタブはそのまま）
+
+      // Paratalkのミーティングページを開く
       try {
         await chrome.windows.create({
-          url: 'http://app.paratalk.jp/meeting',
+          url: 'https://app.paratalk.jp/meeting',
           type: 'normal',
           focused: true
         });
@@ -706,16 +697,16 @@ async function handlePromptResponse(message, sender) {
         logError(e, 'handlePromptResponse - redirect');
       }
 
-      // 3) タブキャプチャ（chrome.tabCapture）での音声取得＋WebSocket送信を開始（パターンB）
-      try {
-        pendingStartRecording = true;
-        await ensureOffscreenDocument();
-        chrome.runtime.sendMessage({ action: 'startRecordingInOffscreen', publicId: globalPublicId, tabId: captureTargetTabId });
-        isRecording = true;
-      } catch (e) {
-        logError(e, 'handlePromptResponse - start display capture');
-        pendingStartRecording = false;
-      }
+      // handleStartRecordingを呼び出して録音を開始
+      console.log('[Background] Calling handleStartRecording from prompt response');
+      handleStartRecording((response) => {
+        if (response && response.error) {
+          console.error('[Background] Recording start failed from prompt:', response.error);
+          logError(new Error(`Recording start failed: ${response.error}`), 'handlePromptResponse - handleStartRecording');
+        } else {
+          console.log('[Background] Recording started successfully from prompt');
+        }
+      });
     }
     return false;
   } catch (error) {
