@@ -7,7 +7,7 @@ This Chrome extension captures audio from the current tab and the microphone, en
 1. Download the MP3 encoder library:
 
    ```bash
-   bash download_lame.sh
+   bash audio_processing/download_lame.sh
    ```
 
 2. Load the extension in Chrome:
@@ -28,5 +28,5 @@ This Chrome extension captures audio from the current tab and the microphone, en
 - `background.js`: Service worker for managing offscreen document and relaying start/stop commands
 - `offscreen.html`: Offscreen document page for audio processing
 - `offscreen.js`: Audio capture (tab + mic), MP3 encoding, and WebSocket streaming logic running in offscreen document (keeps AudioContext alive with a silent oscillator, auto-resumes on suspend, and plays a hidden audio element)
-- `lame.min.js`: MP3 encoder library (download via `download_lame.sh`)
-- `download_lame.sh`: Script to fetch `lame.min.js`
+- `audio_processing/mp3-encoder.min.js`: MP3 encoder library (download via `audio_processing/download_lame.sh`)
+- `audio_processing/download_lame.sh`: Script to fetch MP3 encoder library

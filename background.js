@@ -11,6 +11,8 @@ const MAX_RECONNECT_ATTEMPTS = 3;
 // publicIdを保持するグローバル変数
 let globalPublicId = null;
 let captureTargetTabId = null;
+let globalTabStream = null;
+let globalTabStreamId = null;
 
 // Health check and monitoring
 let healthCheckInterval = null;
@@ -268,6 +270,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           logError(e, 'onMessage - openParatalkMeeting');
         }
         return false;
+
+      case 'executeTabCapture':
+        return handleExecuteTabCapture(message, sendResponse);
+
+      case 'getTabStream':
+        return handleGetTabStream(sendResponse);
         
       default:
         logError(new Error(`Unknown action: ${message.action}`), 'onMessage');
@@ -520,15 +528,21 @@ async function handleOffscreenReady() {
           }
         }
 
-        console.log('Sending startRecordingInOffscreen message with publicId:', globalPublicId, 'tabId:', captureTargetTabId);
+        console.log('Starting chrome.tabCapture for tab:', captureTargetTabId);
         
-        // Send message with better error handling
+        // Execute chrome.tabCapture in background script
         try {
+          const result = await captureTabAudio(captureTargetTabId);
+          console.log('[Background] Tab capture successful, result:', result);
+          
+          // Send stream ID and recording data to offscreen document
           await new Promise((resolve, reject) => {
             chrome.runtime.sendMessage({ 
               action: 'startRecordingInOffscreen', 
               publicId: globalPublicId,
-              tabId: captureTargetTabId
+              tabId: captureTargetTabId,
+              streamId: result.streamId,
+              hasTabStream: true
             }, (response) => {
               if (chrome.runtime.lastError) {
                 const error = chrome.runtime.lastError;
@@ -539,7 +553,9 @@ async function handleOffscreenReady() {
                     chrome.runtime.sendMessage({ 
                       action: 'startRecordingInOffscreen', 
                       publicId: globalPublicId,
-                      tabId: captureTargetTabId
+                      tabId: captureTargetTabId,
+                      streamId: result.streamId,
+                      hasTabStream: true
                     }, () => {
                       if (chrome.runtime.lastError) {
                         reject(new Error(`Message send failed: ${chrome.runtime.lastError.message}`));
@@ -664,6 +680,94 @@ function handleRecordingError(message) {
   } catch (error) {
     logError(error, 'handleRecordingError');
     forceStopRecording();
+    return false;
+  }
+}
+
+/**
+ * Capture audio from specified tab using chrome.tabCapture
+ */
+async function captureTabAudio(tabId) {
+  try {
+    if (!chrome.tabCapture) {
+      throw new Error('chrome.tabCapture API not available');
+    }
+
+    if (!tabId) {
+      throw new Error('No tab ID specified');
+    }
+
+    console.log('[Background] Capturing audio from tab using getMediaStreamId:', tabId);
+
+    // Use the new Manifest V3 compatible API
+    const streamId = await chrome.tabCapture.getMediaStreamId({
+      targetTabId: tabId
+    });
+
+    console.log('[Background] Got stream ID:', streamId);
+
+    if (!streamId) {
+      throw new Error('No stream ID returned from chrome.tabCapture.getMediaStreamId');
+    }
+
+    // Store the stream ID globally so it can be accessed by offscreen document
+    globalTabStreamId = streamId;
+    
+    console.log('[Background] Tab capture stream ID stored successfully');
+    return { streamId, success: true };
+
+  } catch (error) {
+    console.error('[Background] chrome.tabCapture.getMediaStreamId error:', error);
+    throw new Error(`Tab capture failed: ${error.message}`);
+  }
+}
+
+/**
+ * Handle executeTabCapture request from offscreen document
+ */
+function handleExecuteTabCapture(message, sendResponse) {
+  try {
+    const tabId = message.tabId;
+    if (!tabId) {
+      sendResponse({ success: false, error: 'No tab ID provided' });
+      return false;
+    }
+
+    console.log('[Background] Executing tab capture for tab:', tabId);
+    
+    captureTabAudio(tabId)
+      .then((stream) => {
+        console.log('[Background] Tab capture successful, stream stored globally');
+        sendResponse({ success: true, hasStream: true });
+      })
+      .catch((error) => {
+        console.error('[Background] Tab capture failed:', error);
+        sendResponse({ success: false, error: error.message });
+      });
+
+    return true; // Async response
+  } catch (error) {
+    logError(error, 'handleExecuteTabCapture');
+    sendResponse({ success: false, error: 'Internal error' });
+    return false;
+  }
+}
+
+/**
+ * Handle getTabStream request from offscreen document
+ */
+function handleGetTabStream(sendResponse) {
+  try {
+    if (globalTabStreamId) {
+      console.log('[Background] Providing access to global tab stream ID:', globalTabStreamId);
+      sendResponse({ success: true, streamId: globalTabStreamId, hasStream: true });
+    } else {
+      sendResponse({ success: false, error: 'No tab stream ID available' });
+    }
+    return false;
+  } catch (error) {
+    logError(error, 'handleGetTabStream');
+    sendResponse({ success: false, error: 'Internal error' });
     return false;
   }
 }
