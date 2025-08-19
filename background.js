@@ -461,72 +461,67 @@ async function handleOffscreenReady() {
           }
         }
 
-        console.log('Starting chrome.tabCapture for tab:', captureTargetTabId);
+        console.log('[Background] Using pre-captured stream ID from handleStartRecordingFromPopup:', globalTabStreamId);
         
-        // Execute chrome.tabCapture in background script
-        try {
-          const result = await captureTabAudio(captureTargetTabId);
-          console.log('[Background] Tab capture successful, result:', result);
-          
-          // Send stream ID and recording data to offscreen document
-          await new Promise((resolve, reject) => {
-            chrome.runtime.sendMessage({ 
-              action: 'startRecordingInOffscreen', 
-              publicId: globalPublicId,
-              tabId: captureTargetTabId,
-              streamId: result.streamId,
-              hasTabStream: true
-            }, (response) => {
-              if (chrome.runtime.lastError) {
-                const error = chrome.runtime.lastError;
-                if (error.message && error.message.includes('Receiving end does not exist')) {
-                  console.warn('[Background] Offscreen document not ready yet, retrying...');
-                  // Retry after a short delay
-                  setTimeout(() => {
-                    chrome.runtime.sendMessage({ 
-                      action: 'startRecordingInOffscreen', 
-                      publicId: globalPublicId,
-                      tabId: captureTargetTabId,
-                      streamId: result.streamId,
-                      hasTabStream: true
-                    }, () => {
-                      if (chrome.runtime.lastError) {
-                        reject(new Error(`Message send failed: ${chrome.runtime.lastError.message}`));
-                      } else {
-                        resolve();
-                      }
-                    });
-                  }, 500);
-                } else {
-                  reject(new Error(`Message send failed: ${error.message}`));
-                }
+        // Use the stream ID that was already captured in handleStartRecordingFromPopup
+        if (!globalTabStreamId) {
+          throw new Error('No stream ID available - tab capture should have been done in handleStartRecordingFromPopup');
+        }
+        
+        // Send stream ID and recording data to offscreen document
+        await new Promise((resolve, reject) => {
+          chrome.runtime.sendMessage({ 
+            action: 'start', // Changed from 'startRecordingInOffscreen' to match offscreen.js
+            publicId: globalPublicId,
+            tabId: captureTargetTabId,
+            streamId: globalTabStreamId, // Use the globally stored streamId
+            hasTabStream: true
+          }, (response) => {
+            if (chrome.runtime.lastError) {
+              const error = chrome.runtime.lastError;
+              if (error.message && error.message.includes('Receiving end does not exist')) {
+                console.warn('[Background] Offscreen document not ready yet, retrying...');
+                // Retry after a short delay
+                setTimeout(() => {
+                  chrome.runtime.sendMessage({ 
+                    action: 'start', // Changed from 'startRecordingInOffscreen' to match offscreen.js
+                    publicId: globalPublicId,
+                    tabId: captureTargetTabId,
+                    streamId: globalTabStreamId, // Use the globally stored streamId
+                    hasTabStream: true
+                  }, () => {
+                    if (chrome.runtime.lastError) {
+                      reject(new Error(`Message send failed: ${chrome.runtime.lastError.message}`));
+                    } else {
+                      resolve();
+                    }
+                  });
+                }, 500);
               } else {
-                resolve(response);
+                reject(new Error(`Message send failed: ${error.message}`));
               }
-            });
+            } else {
+              resolve(response);
+            }
           });
+        });
           
           pendingStartRecording = false;
           isRecording = true;
           console.log('[Background] Recording start message sent successfully');
           
-        } catch (messageError) {
-          logError(messageError, 'handleOffscreenReady - message send failed');
-          pendingStartRecording = false;
-          recordingStartTime = null;
-          
-          // Try to restart offscreen document
-          console.warn('[Background] Attempting to recreate offscreen document...');
-          try {
-            await ensureOffscreenDocument();
-          } catch (recreateError) {
-            logError(recreateError, 'handleOffscreenReady - recreate offscreen failed');
-          }
-        }
-      } catch (e) {
-        logError(e, 'handleOffscreenReady - general error');
+      } catch (messageError) {
+        logError(messageError, 'handleOffscreenReady - message send failed');
         pendingStartRecording = false;
         recordingStartTime = null;
+        
+        // Try to restart offscreen document
+        console.warn('[Background] Attempting to recreate offscreen document...');
+        try {
+          await ensureOffscreenDocument();
+        } catch (recreateError) {
+          logError(recreateError, 'handleOffscreenReady - recreate offscreen failed');
+        }
       }
     }
     return false;
@@ -537,7 +532,6 @@ async function handleOffscreenReady() {
     return false;
   }
 }
-
 /**
  * Handle recording stopped notification
  */
@@ -617,43 +611,7 @@ function handleRecordingError(message) {
   }
 }
 
-/**
- * Capture audio from specified tab using chrome.tabCapture
- */
-async function captureTabAudio(tabId) {
-  try {
-    if (!chrome.tabCapture) {
-      throw new Error('chrome.tabCapture API not available');
-    }
 
-    if (!tabId) {
-      throw new Error('No tab ID specified');
-    }
-
-    console.log('[Background] Capturing audio from tab using getMediaStreamId:', tabId);
-
-    // Use the new Manifest V3 compatible API
-    const streamId = await chrome.tabCapture.getMediaStreamId({
-      targetTabId: tabId
-    });
-
-    console.log('[Background] Got stream ID:', streamId);
-
-    if (!streamId) {
-      throw new Error('No stream ID returned from chrome.tabCapture.getMediaStreamId');
-    }
-
-    // Store the stream ID globally so it can be accessed by offscreen document
-    globalTabStreamId = streamId;
-    
-    console.log('[Background] Tab capture stream ID stored successfully');
-    return { streamId, success: true };
-
-  } catch (error) {
-    console.error('[Background] chrome.tabCapture.getMediaStreamId error:', error);
-    throw new Error(`Tab capture failed: ${error.message}`);
-  }
-}
 
 
 

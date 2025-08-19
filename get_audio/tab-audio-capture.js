@@ -10,72 +10,94 @@ class TabAudioCapture {
   }
 
   /**
-   * Get tab stream using streamId from background script
+   * Get tab stream using streamId (either provided or from background script)
+   * @param {string} streamId - Optional stream ID to use directly
    * @returns {Promise<MediaStream>} Tab audio stream
    */
-  async getTabStream() {
-    console.log('[TabAudioCapture] Attempting to get tab stream from background...');
+  async getTabStream(streamId = null) {
+    console.log('[TabAudioCapture] Attempting to get tab stream...');
     
-    return new Promise((resolve, reject) => {
-      // Get stream ID from background script
-      chrome.runtime.sendMessage({
-        action: 'getTabStream'
-      }, async (response) => {
-        if (chrome.runtime.lastError) {
-          reject(new Error(`Failed to get stream ID: ${chrome.runtime.lastError.message}`));
-          return;
-        }
-
-        if (!response || !response.success || !response.streamId) {
-          reject(new Error('No stream ID available from background'));
-          return;
-        }
-
-        console.log('[TabAudioCapture] Got stream ID from background:', response.streamId);
-
-        try {
-          // Use the stream ID to get MediaStream via getUserMedia
-          const stream = await navigator.mediaDevices.getUserMedia({
-            audio: {
-              mandatory: {
-                chromeMediaSource: 'tab',
-                chromeMediaSourceId: response.streamId
-              }
-            }
-          });
-
-          console.log('[TabAudioCapture] Successfully created MediaStream from stream ID');
-          
-          // Validate stream has audio tracks
-          const audioTracks = stream.getAudioTracks();
-          if (audioTracks.length === 0) {
-            stream.getTracks().forEach(track => track.stop());
-            reject(new Error('No audio tracks in stream'));
+    if (streamId) {
+      // Use provided streamId directly
+      console.log('[TabAudioCapture] Using provided stream ID:', streamId);
+      return this.createStreamFromId(streamId);
+    } else {
+      // Fallback: Get stream ID from background script
+      console.log('[TabAudioCapture] No streamId provided, requesting from background...');
+      
+      return new Promise((resolve, reject) => {
+        chrome.runtime.sendMessage({
+          action: 'getTabStream'
+        }, async (response) => {
+          if (chrome.runtime.lastError) {
+            reject(new Error(`Failed to get stream ID: ${chrome.runtime.lastError.message}`));
             return;
           }
 
-          console.log('[TabAudioCapture] Stream audio tracks:', audioTracks.map(t => ({
-            kind: t.kind,
-            enabled: t.enabled,
-            readyState: t.readyState,
-            label: t.label,
-            id: t.id
-          })));
+          if (!response || !response.success || !response.streamId) {
+            reject(new Error('No stream ID available from background'));
+            return;
+          }
 
-          this.tabStream = stream;
-          this.isActive = true;
+          console.log('[TabAudioCapture] Got stream ID from background:', response.streamId);
 
-          // Set up stream event listeners
-          this._setupStreamEventListeners(stream);
+          try {
+            const stream = await this.createStreamFromId(response.streamId);
+            resolve(stream);
+          } catch (error) {
+            reject(error);
+          }
+        });
+      });
+    }
+  }
 
-          resolve(stream);
-
-        } catch (streamError) {
-          console.error('[TabAudioCapture] Failed to create MediaStream from stream ID:', streamError);
-          reject(new Error(`Failed to create MediaStream: ${streamError.message}`));
+  /**
+   * Create MediaStream from stream ID
+   * @param {string} streamId - The stream ID to use
+   * @returns {Promise<MediaStream>} Tab audio stream
+   */
+  async createStreamFromId(streamId) {
+    try {
+      // Use the stream ID to get MediaStream via getUserMedia
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          mandatory: {
+            chromeMediaSource: 'tab',
+            chromeMediaSourceId: streamId
+          }
         }
       });
-    });
+
+      console.log('[TabAudioCapture] Successfully created MediaStream from stream ID');
+      
+      // Validate stream has audio tracks
+      const audioTracks = stream.getAudioTracks();
+      if (audioTracks.length === 0) {
+        stream.getTracks().forEach(track => track.stop());
+        throw new Error('No audio tracks in stream');
+      }
+
+      console.log('[TabAudioCapture] Stream audio tracks:', audioTracks.map(t => ({
+        kind: t.kind,
+        enabled: t.enabled,
+        readyState: t.readyState,
+        label: t.label,
+        id: t.id
+      })));
+
+      this.tabStream = stream;
+      this.isActive = true;
+
+      // Set up stream event listeners
+      this._setupStreamEventListeners(stream);
+
+      return stream;
+
+    } catch (streamError) {
+      console.error('[TabAudioCapture] Failed to create MediaStream from stream ID:', streamError);
+      throw new Error(`Failed to create MediaStream: ${streamError.message}`);
+    }
   }
 
   /**
