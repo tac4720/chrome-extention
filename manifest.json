@@ -3,7 +3,7 @@
   "name": "Paratalk",
   "description": "Capture screen and mic audio using getDisplayMedia, encode as MP3 and stream via WebSocket",
   "version": "1.0",
-  "permissions": ["cookies", "tabs", "windows", "tabCapture", "offscreen", "desktopCapture"],
+  "permissions": ["cookies", "tabs", "windows", "tabCapture", "offscreen", "desktopCapture", "activeTab"],
   "host_permissions": ["<all_urls>"],
   "action": {
     "default_popup": "popup.html"

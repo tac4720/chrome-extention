@@ -1,7 +1,6 @@
 // Background service worker: handle recording control and audio processing
 let pendingStartRecording = false;
 let isRecording = false;
-let recordingWindowId = null;
 let recordingTabId = null;
 let recordingStartTime = null;
 let reconnectAttempts = 0;
@@ -49,13 +48,7 @@ function validateRecordingState() {
   
   // Check for stuck recording - timeout check removed
   
-  // Check for orphaned windows
-  if (recordingWindowId && isRecording) {
-    chrome.windows.get(recordingWindowId).catch(() => {
-      logError(new Error('Recording window lost'), 'validateRecordingState');
-      resetRecordingState();
-    });
-  }
+  // Basic state validation
   
   return true;
 }
@@ -70,15 +63,7 @@ function forceStopRecording() {
   isRecording = false;
   recordingStartTime = null;
   
-  if (recordingWindowId) {
-    try {
-      chrome.windows.remove(recordingWindowId);
-    } catch (e) {
-      logError(e, 'forceStopRecording - window removal');
-    }
-    recordingWindowId = null;
-    recordingTabId = null;
-  }
+  recordingTabId = null;
   
   // Send broadcast stop message
   try {
@@ -94,7 +79,6 @@ function forceStopRecording() {
 function resetRecordingState() {
   pendingStartRecording = false;
   isRecording = false;
-  recordingWindowId = null;
   recordingTabId = null;
   recordingStartTime = null;
   reconnectAttempts = 0;
@@ -124,27 +108,30 @@ startHealthMonitoring();
 /**
  * Create offscreen document using Chrome's offscreen API
  */
-async function openOffscreenWindow() {
+async function createOffscreenDocument() {
   try {
     // Check if chrome.offscreen API is available
     if (!chrome.offscreen || typeof chrome.offscreen.createDocument !== 'function') {
-      console.warn('[Background] chrome.offscreen API not available, using fallback method');
       throw new Error('chrome.offscreen API not available');
     }
     
-    // Check if chrome.runtime.getContexts is available
+    // Check if offscreen document already exists and close it
     if (chrome.runtime.getContexts && typeof chrome.runtime.getContexts === 'function') {
-      // Check if offscreen document already exists
       const existingContexts = await chrome.runtime.getContexts({
         contextTypes: ['OFFSCREEN_DOCUMENT']
       });
       
       if (existingContexts.length > 0) {
-        console.log('[Background] Offscreen document already exists');
-        return existingContexts[0];
+        console.log('[Background] Existing offscreen document found, closing it...');
+        try {
+          await chrome.offscreen.closeDocument();
+          console.log('[Background] Existing offscreen document closed');
+          // Small delay to ensure cleanup
+          await new Promise(resolve => setTimeout(resolve, 100));
+        } catch (error) {
+          console.warn('[Background] Failed to close existing offscreen document:', error);
+        }
       }
-    } else {
-      console.warn('[Background] chrome.runtime.getContexts not available, skipping existence check');
     }
     
     // Create offscreen document
@@ -156,49 +143,11 @@ async function openOffscreenWindow() {
     });
     
     console.log('[Background] Offscreen document created successfully');
-    return { id: 'offscreen' }; // Mock window object
+    return { id: 'offscreen' };
     
-  } catch (e) {
-    console.error('Error creating offscreen document:', e);
-    
-    // Fallback to popup window method
-    console.log('[Background] Falling back to popup window method...');
-    try {
-      const url = chrome.runtime.getURL('offscreen.html');
-      console.log('[Background] Attempting to create window with URL:', url);
-      
-      const win = await chrome.windows.create({
-        url,
-        type: 'popup',
-        focused: true,
-        width: 800,
-        height: 600,
-        left: 50,
-        top: 50,
-        state: 'normal'
-      });
-      
-      // Force window to front
-      setTimeout(async () => {
-        try {
-          await chrome.windows.update(win.id, { focused: true });
-          console.log('[Background] Window forced to front');
-        } catch (e) {
-          console.error('Error focusing window:', e);
-        }
-      }, 100);
-      
-      console.log('[Background] Window creation result:', win);
-      recordingWindowId = win.id;
-      if (win.tabs && win.tabs.length > 0) {
-        recordingTabId = win.tabs[0].id;
-      }
-      
-      return win;
-    } catch (fallbackError) {
-      console.error('Fallback window creation failed:', fallbackError);
-      return null;
-    }
+  } catch (error) {
+    console.error('[Background] Failed to create offscreen document:', error);
+    throw error;
   }
 }
 // Handle messages from popup and offscreen window
@@ -271,8 +220,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
         return false;
 
-      case 'executeTabCapture':
-        return handleExecuteTabCapture(message, sendResponse);
 
       case 'getTabStream':
         return handleGetTabStream(sendResponse);
@@ -316,34 +263,39 @@ function handleStartRecording(sendResponse) {
     resetRecordingState();
     recordingStartTime = Date.now();
     
-    // Determine capture target tab: prefer Meet tab in current window, fallback to active tab
-    try {
-      chrome.tabs.query({ currentWindow: true, url: 'https://meet.google.com/*' }, (meetTabs) => {
-        try {
-          let target = null;
-          if (Array.isArray(meetTabs) && meetTabs.length > 0) {
-            target = meetTabs.find(t => t.active) || meetTabs[0];
+    // Use existing captureTargetTabId if available, otherwise determine capture target tab
+    if (!captureTargetTabId) {
+      console.log('[Background] No captureTargetTabId set, searching for Meet tab...');
+      try {
+        chrome.tabs.query({ currentWindow: true, url: 'https://meet.google.com/*' }, (meetTabs) => {
+          try {
+            let target = null;
+            if (Array.isArray(meetTabs) && meetTabs.length > 0) {
+              target = meetTabs.find(t => t.active) || meetTabs[0];
+            }
+            if (target && target.id) {
+              captureTargetTabId = target.id;
+              console.log('[Background] Selected captureTargetTabId (meet):', captureTargetTabId);
+            } else {
+              chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+                try {
+                  const activeTab = tabs && tabs[0];
+                  captureTargetTabId = activeTab && activeTab.id ? activeTab.id : null;
+                  console.log('[Background] Selected captureTargetTabId (active):', captureTargetTabId);
+                } catch (e) {
+                  logError(e, 'handleStartRecording - select active tab');
+                }
+              });
+            }
+          } catch (e) {
+            logError(e, 'handleStartRecording - select meet tab');
           }
-          if (target && target.id) {
-            captureTargetTabId = target.id;
-            console.log('[Background] Selected captureTargetTabId (meet):', captureTargetTabId);
-          } else {
-            chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-              try {
-                const activeTab = tabs && tabs[0];
-                captureTargetTabId = activeTab && activeTab.id ? activeTab.id : null;
-                console.log('[Background] Selected captureTargetTabId (active):', captureTargetTabId);
-              } catch (e) {
-                logError(e, 'handleStartRecording - select active tab');
-              }
-            });
-          }
-        } catch (e) {
-          logError(e, 'handleStartRecording - select meet tab');
-        }
-      });
-    } catch (e) {
-      logError(e, 'handleStartRecording - tabs.query meet');
+        });
+      } catch (e) {
+        logError(e, 'handleStartRecording - tabs.query meet');
+      }
+    } else {
+      console.log('[Background] Using existing captureTargetTabId:', captureTargetTabId);
     }
 
     // Find public IDs with timeout
@@ -429,20 +381,7 @@ function handleStopRecording(sendResponse) {
         
         isRecording = false;
         recordingStartTime = null;
-        
-        // Close window after confirmation
-        if (recordingWindowId) {
-          setTimeout(() => {
-          try {
-            chrome.windows.remove(recordingWindowId);
-              console.log('Recording window closed');
-          } catch (e) {
-              logError(e, 'handleStopRecording - window close');
-          }
-          }, 100);
-          recordingWindowId = null;
-          recordingTabId = null;
-        }
+        recordingTabId = null;
         
         sendResponse({ success: true });
       }
@@ -482,22 +421,13 @@ function handleGetRecordingStatus(sendResponse) {
         return false;
     }
     
-    if (isRecording && recordingWindowId) {
-      chrome.windows.get(recordingWindowId)
-        .then(() => {
-          console.log('[background.js] Recording window exists, confirming recording active');
-          sendResponse({ 
-            isRecording: true, 
-            startTime: recordingStartTime,
-            duration: recordingStartTime ? Date.now() - recordingStartTime : 0
-          });
-        })
-        .catch(() => {
-          logError(new Error('Recording window missing during status check'), 'handleGetRecordingStatus');
-          resetRecordingState();
-          sendResponse({ isRecording: false });
-        });
-      return true;
+    if (isRecording) {
+      sendResponse({ 
+        isRecording: true, 
+        startTime: recordingStartTime,
+        duration: recordingStartTime ? Date.now() - recordingStartTime : 0
+      });
+      return false;
     } else {
         sendResponse({ isRecording });
         return false;
@@ -722,36 +652,7 @@ async function captureTabAudio(tabId) {
   }
 }
 
-/**
- * Handle executeTabCapture request from offscreen document
- */
-function handleExecuteTabCapture(message, sendResponse) {
-  try {
-    const tabId = message.tabId;
-    if (!tabId) {
-      sendResponse({ success: false, error: 'No tab ID provided' });
-      return false;
-    }
 
-    console.log('[Background] Executing tab capture for tab:', tabId);
-    
-    captureTabAudio(tabId)
-      .then((stream) => {
-        console.log('[Background] Tab capture successful, stream stored globally');
-        sendResponse({ success: true, hasStream: true });
-      })
-      .catch((error) => {
-        console.error('[Background] Tab capture failed:', error);
-        sendResponse({ success: false, error: error.message });
-      });
-
-    return true; // Async response
-  } catch (error) {
-    logError(error, 'handleExecuteTabCapture');
-    sendResponse({ success: false, error: 'Internal error' });
-    return false;
-  }
-}
 
 /**
  * Handle getTabStream request from offscreen document
@@ -778,16 +679,26 @@ function handleGetTabStream(sendResponse) {
 async function handlePromptResponse(message, sender) {
   try {
     console.log('[Background] Prompt response:', message.response, 'tab:', message.tabId, 'url:', message.url);
+    console.log('[Background] 受信したメッセージ詳細:', message);
+    
     // close any legacy prompt window if opened
     if (promptWindowId) { try { chrome.windows.remove(promptWindowId); } catch (_) {} promptWindowId = null; }
 
     if (message.response === 'yes') {
-      // Set capture target tab from the sender tab (Meet tab)
+      // sender.tab.idを使用してタブIDを取得（正式な方法）
       try {
         captureTargetTabId = sender && sender.tab && sender.tab.id ? sender.tab.id : null;
-        console.log('[Background] captureTargetTabId from prompt:', captureTargetTabId);
+        
+        if (captureTargetTabId) {
+          console.log('[Background] 🎯 Google MeetタブIDを取得:', captureTargetTabId);
+          console.log('[Background] 🌐 タブURL:', sender.tab.url);
+          console.log('[Background] 📝 タブキャプチャはhandleOffscreenReady()で実行されます');
+        } else {
+          console.error('[Background] ⚠️ sender.tab.idが取得できません');
+          logError(new Error('sender.tab.id not available'), 'handlePromptResponse');
+        }
       } catch (e) {
-        logError(e, 'handlePromptResponse - captureTargetTabId from sender');
+        logError(e, 'handlePromptResponse - sender.tab.id');
       }
 
       // Paratalkのミーティングページを開く
@@ -896,15 +807,15 @@ async function ensureOffscreenDocument() {
       try {
         console.log(`[Background] Creating offscreen document (attempt ${attempts}/${maxAttempts})`);
       
-      // Create the offscreen window
-        console.log('[Background] Calling openOffscreenWindow...');
-      const window = await openOffscreenWindow();
+              // Create the offscreen document
+        console.log('[Background] Calling createOffscreenDocument...');
+      const document = await createOffscreenDocument();
       
-      if (!window) {
-        throw new Error('Failed to create offscreen window');
+      if (!document) {
+        throw new Error('Failed to create offscreen document');
       }
       
-        console.log('[Background] Offscreen window created:', window.id);
+        console.log('[Background] Offscreen document created:', document.id);
         
         // Set timeout for ready message
       const timeoutId = setTimeout(() => {

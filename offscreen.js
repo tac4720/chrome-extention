@@ -537,4 +537,8 @@
   }, CONFIG.HEARTBEAT_INTERVAL);
 
   console.log('[Offscreen] Modular offscreen script loaded');
+  
+  // バックグラウンドに準備完了を通知
+  chrome.runtime.sendMessage({ action: 'offscreenReady' });
+  console.log('[Offscreen] Sent offscreenReady message to background');
 })();

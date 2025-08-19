@@ -242,7 +242,16 @@
   if (!isTargetMeetPath()) return;
 
   const banner = createBanner('paratalkを起動させますか？', () => {
-    chrome.runtime.sendMessage({ action: 'promptResponse', response: 'yes', url: location.href });
+    console.log('[ContentPrompt] ユーザーが「はい」をクリック');
+    console.log('[ContentPrompt] タブURL:', location.href);
+    
+    // バックグラウンドにメッセージを送信（タブIDはsender.tab.idで取得）
+    chrome.runtime.sendMessage({ 
+      action: 'promptResponse', 
+      response: 'yes', 
+      url: location.href
+    });
+    
     banner.remove();
   }, () => {
     chrome.runtime.sendMessage({ action: 'promptResponse', response: 'no', url: location.href });
