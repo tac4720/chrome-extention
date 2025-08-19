@@ -245,14 +245,10 @@
     console.log('[ContentPrompt] ユーザーが「はい」をクリック');
     console.log('[ContentPrompt] タブURL:', location.href);
     
-    // バックグラウンドにメッセージを送信（タブIDはsender.tab.idで取得）
-    chrome.runtime.sendMessage({ 
-      action: 'promptResponse', 
-      response: 'yes', 
-      url: location.href
-    });
-    
     banner.remove();
+    
+    // 拡張機能アイコンクリックを促すメッセージを表示
+    showExtensionClickPrompt();
   }, () => {
     chrome.runtime.sendMessage({ action: 'promptResponse', response: 'no', url: location.href });
     banner.remove();
@@ -274,5 +270,141 @@
       return false;
     }
   });
+
+  /**
+   * 拡張機能アイコンクリックを促すメッセージを表示
+   */
+  function showExtensionClickPrompt() {
+    // 既存のプロンプトがある場合は削除
+    const existingPrompt = document.getElementById('paratalk-extension-prompt');
+    if (existingPrompt) {
+      existingPrompt.remove();
+    }
+
+    const container = document.createElement('div');
+    container.id = 'paratalk-extension-prompt';
+    container.style.cssText = `
+      position: fixed;
+      top: 16px;
+      right: 16px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 20px;
+      border-radius: 12px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+      z-index: 10001;
+      max-width: 350px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 14px;
+      line-height: 1.5;
+      animation: slideInFromRight 0.3s ease-out;
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+    `;
+
+    // アニメーション用CSSを追加
+    if (!document.getElementById('paratalk-animation-styles')) {
+      const style = document.createElement('style');
+      style.id = 'paratalk-animation-styles';
+      style.textContent = `
+        @keyframes slideInFromRight {
+          from {
+            transform: translateX(100%);
+            opacity: 0;
+          }
+          to {
+            transform: translateX(0);
+            opacity: 1;
+          }
+        }
+        @keyframes pulse {
+          0%, 100% { transform: scale(1); }
+          50% { transform: scale(1.05); }
+        }
+      `;
+      document.head.appendChild(style);
+    }
+
+    const title = document.createElement('div');
+    title.textContent = '🚀 Paratalkを開始';
+    title.style.cssText = `
+      font-size: 16px;
+      font-weight: bold;
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    `;
+
+    const message = document.createElement('div');
+    message.innerHTML = `
+      音声キャプチャを開始するために、<br>
+      <strong>ブラウザーの右上にあるParatalkアイコン</strong>をクリックしてください。
+    `;
+    message.style.cssText = `
+      margin-bottom: 16px;
+      opacity: 0.9;
+    `;
+
+    const iconHint = document.createElement('div');
+    iconHint.innerHTML = '🔍 アイコンが見つからない場合は、ブラウザーのアドレスバー右のパズルアイコンをクリック';
+    iconHint.style.cssText = `
+      font-size: 12px;
+      opacity: 0.7;
+      margin-bottom: 16px;
+      padding: 8px;
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 6px;
+    `;
+
+    const closeButton = document.createElement('button');
+    closeButton.textContent = '×';
+    closeButton.style.cssText = `
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      background: rgba(255, 255, 255, 0.2);
+      color: white;
+      border: none;
+      border-radius: 50%;
+      width: 24px;
+      height: 24px;
+      cursor: pointer;
+      font-size: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    `;
+
+    closeButton.addEventListener('click', () => {
+      container.style.transform = 'translateX(100%)';
+      container.style.opacity = '0';
+      setTimeout(() => container.remove(), 300);
+    });
+
+    closeButton.addEventListener('mouseenter', () => {
+      closeButton.style.background = 'rgba(255, 255, 255, 0.3)';
+    });
+
+    closeButton.addEventListener('mouseleave', () => {
+      closeButton.style.background = 'rgba(255, 255, 255, 0.2)';
+    });
+
+    container.appendChild(title);
+    container.appendChild(message);
+    container.appendChild(iconHint);
+    container.appendChild(closeButton);
+    
+    document.documentElement.appendChild(container);
+
+    // 10秒後に自動で閉じる
+    setTimeout(() => {
+      if (container.parentNode) {
+        container.style.transform = 'translateX(100%)';
+        container.style.opacity = '0';
+        setTimeout(() => container.remove(), 300);
+      }
+    }, 10000);
+  }
 })();
 

@@ -224,6 +224,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       case 'getTabStream':
         return handleGetTabStream(sendResponse);
         
+      case 'startRecordingFromPopup':
+        return handleStartRecordingFromPopup(message, sendResponse);
+        
       default:
         logError(new Error(`Unknown action: ${message.action}`), 'onMessage');
         sendResponse({ error: 'Unknown action' });
@@ -414,7 +417,7 @@ function handleStopRecording(sendResponse) {
  */
 function handleGetRecordingStatus(sendResponse) {
   try {
-    console.log('[background.js] Status check - isRecording:', isRecording, 'pendingStart:', pendingStartRecording, 'windowId:', recordingWindowId);
+    console.log('[background.js] Status check - isRecording:', isRecording, 'pendingStart:', pendingStartRecording);
     
     if (pendingStartRecording) {
       sendResponse({ isRecording: false, isPending: true });
@@ -670,6 +673,62 @@ function handleGetTabStream(sendResponse) {
     logError(error, 'handleGetTabStream');
     sendResponse({ success: false, error: 'Internal error' });
     return false;
+  }
+}
+
+/**
+ * Handle start recording request from popup (with activeTab permission)
+ */
+async function handleStartRecordingFromPopup(message, sendResponse) {
+  try {
+    console.log('[Background] 🎆 Popupからの録音開始リクエスト:', message.tabId);
+    
+    if (!message.tabId) {
+      sendResponse({ success: false, error: 'Tab IDが指定されていません' });
+      return true;
+    }
+    
+    // activeTab権限が有効化された状態でタブキャプチャを実行
+    try {
+      console.log('[Background] 🎯 activeTab権限でタブキャプチャを実行:', message.tabId);
+      
+      const streamId = await chrome.tabCapture.getMediaStreamId({
+        targetTabId: message.tabId
+      });
+      
+      if (!streamId) {
+        throw new Error('ストリームIDが取得できませんでした');
+      }
+      
+      console.log('[Background] ✅ タブキャプチャ成功! ストリームID:', streamId);
+      console.log('[Background] 🎯 タブID:', message.tabId);
+      
+      // グローバルにストリームIDを保存
+      globalTabStreamId = streamId;
+      captureTargetTabId = message.tabId;
+      
+      // オフスクリーンドキュメントを作成して録音開始
+      console.log('[Background] 🎥 オフスクリーンドキュメントで録音開始...');
+      
+      await ensureOffscreenDocument();
+      
+      sendResponse({ success: true, streamId: streamId });
+      return true;
+      
+    } catch (captureError) {
+      console.error('[Background] ❌ タブキャプチャ失敗:', captureError);
+      sendResponse({ 
+        success: false, 
+        error: `タブキャプチャ失敗: ${captureError.message}` 
+      });
+      return true;
+    }
+    
+  } catch (error) {
+    console.error('[Background] handleStartRecordingFromPopupエラー:', error);
+    logError(error, 'handleStartRecordingFromPopup');
+    sendResponse({ success: false, error: '内部エラーが発生しました' });
+    return true;
   }
 }
 
