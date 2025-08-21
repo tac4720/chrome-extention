@@ -17,7 +17,6 @@
   let lastHeartbeat = Date.now();
   let receivedPublicId = null;
   let captureTabId = null;
-  let receivedStreamId = null;
   
   // Configuration
   const CONFIG = {
@@ -374,8 +373,8 @@
         audioRouting.connectMicAudio(micStream);
       }
       
-      // Get tab stream using the streamId from background.js
-      const tabStream = await tabAudioCapture.getTabStream(receivedStreamId);
+      // Get tab stream (using fallback to get streamId from background.js)
+      const tabStream = await tabAudioCapture.getTabStream();
       console.log('[Offscreen] Tab stream received');
       audioRouting.connectTabAudio(tabStream);
       
@@ -473,8 +472,6 @@
       case 'start':
         receivedPublicId = message.publicId;
         captureTabId = message.tabId;
-        receivedStreamId = message.streamId; // Save the streamId from background.js
-        console.log('[Offscreen] Received streamId from background:', receivedStreamId);
         startRecording()
           .then(() => sendResponse({ success: true }))
           .catch(error => {

@@ -59,6 +59,9 @@ class TabAudioCapture {
    */
   async createStreamFromId(streamId) {
     try {
+      console.log('[TabAudioCapture] 🎯 createStreamFromId 開始 - streamId:', streamId);
+      console.log('[TabAudioCapture] 📡 navigator.mediaDevices.getUserMedia を実行中...');
+      
       // Use the stream ID to get MediaStream via getUserMedia
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
