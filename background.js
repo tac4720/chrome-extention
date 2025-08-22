@@ -469,42 +469,34 @@ async function handleOffscreenReady() {
         }
         
         // Send stream ID and recording data to offscreen document
-        await new Promise((resolve, reject) => {
-          chrome.runtime.sendMessage({ 
-            action: 'start', // Changed from 'startRecordingInOffscreen' to match offscreen.js
-            publicId: globalPublicId,
-            tabId: captureTargetTabId,
-            streamId: globalTabStreamId, // Use the globally stored streamId
-            hasTabStream: true
-          }, (response) => {
-            if (chrome.runtime.lastError) {
-              const error = chrome.runtime.lastError;
-              if (error.message && error.message.includes('Receiving end does not exist')) {
-                console.warn('[Background] Offscreen document not ready yet, retrying...');
-                // Retry after a short delay
-                setTimeout(() => {
-                  chrome.runtime.sendMessage({ 
-                    action: 'start', // Changed from 'startRecordingInOffscreen' to match offscreen.js
-                    publicId: globalPublicId,
-                    tabId: captureTargetTabId,
-                    streamId: globalTabStreamId, // Use the globally stored streamId
-                    hasTabStream: true
-                  }, () => {
-                    if (chrome.runtime.lastError) {
-                      reject(new Error(`Message send failed: ${chrome.runtime.lastError.message}`));
-                    } else {
-                      resolve();
-                    }
-                  });
-                }, 500);
+        const sendStartMessage = () => {
+          return new Promise((resolve, reject) => {
+            chrome.runtime.sendMessage({ 
+              action: 'start',
+              publicId: globalPublicId,
+              streamId: globalTabStreamId
+            }, (response) => {
+              if (chrome.runtime.lastError) {
+                console.log("aaaaaaaaaaaaaa");
+                reject(new Error(`Message send failed: ${chrome.runtime.lastError.message}`));
               } else {
-                reject(new Error(`Message send failed: ${error.message}`));
+                resolve(response);
               }
-            } else {
-              resolve(response);
-            }
+            });
           });
-        });
+        };
+
+        try {
+          await sendStartMessage();
+        } catch (error) {
+          if (error.message.includes('Receiving end does not exist')) {
+            console.warn('[Background] Offscreen document not ready yet, retrying...');
+            await new Promise(resolve => setTimeout(resolve, 500));
+            await sendStartMessage();
+          } else {
+            throw error;
+          }
+        }
           
           pendingStartRecording = false;
           isRecording = true;
@@ -665,13 +657,42 @@ async function handleStartRecordingFromPopup(message, sendResponse) {
       globalTabStreamId = streamId;
       captureTargetTabId = message.tabId;
       
-      // オフスクリーンドキュメントを作成して録音開始
-      console.log('[Background] 🎥 オフスクリーンドキュメントで録音開始...');
+      // ★ Paratalk ミーティングページを開く
+      console.log('[Background] 🌐 Paratalk ミーティングページを開きます...');
+      try {
+        await chrome.tabs.create({ 
+          url: 'https://app.paratalk.jp/meeting', 
+          active: true 
+        });
+        console.log('[Background] ✅ Paratalk ページを開きました');
+      } catch (error) {
+        console.error('[Background] ❌ Paratalk ページを開けませんでした:', error);
+      }
       
-      await ensureOffscreenDocument();
+      // 少し待ってから publicId を検索
+      console.log('[Background] 🔍 publicId を検索中...');
+      setTimeout(() => {
+        findAllPublicIds(async (publicIds) => {
+        if (publicIds.length > 0) {
+          globalPublicId = publicIds[0].public_id;
+          console.log('[Background] ✅ publicId 取得成功:', globalPublicId);
+        } else {
+          globalPublicId = null;
+          console.log('[Background] ⚠️ publicId が見つかりません');
+        }
+        
+        pendingStartRecording = true;
+        
+        try {
+          await ensureOffscreenDocument();
+          sendResponse({ success: true, streamId: streamId });
+        } catch (error) {
+          sendResponse({ success: false, error: error.message });
+        }
+      });
+      }, 2000); // 2秒待機
       
-      sendResponse({ success: true, streamId: streamId });
-      return true;
+      return true; // 非同期レスポンス
       
     } catch (captureError) {
       console.error('[Background] ❌ タブキャプチャ失敗:', captureError);
@@ -773,7 +794,7 @@ function showLoginRequiredBanner() {
 function focusOrOpenParatalk() {
   try {
     chrome.tabs.query({}, (tabs) => {
-      const targetUrl = 'https://app.paratalk.jp/login';
+      const targetUrl = 'https://app.paratalk.jp/meeting';
       const sitePrefix = 'https://app.paratalk.jp/';
       const existing = tabs.find(t => typeof t.url === 'string' && t.url.startsWith(sitePrefix));
       if (existing) {
@@ -810,47 +831,32 @@ function focusOrOpenParatalkMeeting() {
 }
 
 /**
- * Enhanced offscreen document management with retry logic
+ * Simple offscreen document creation without retry logic
  */
 async function ensureOffscreenDocument() {
   console.log('[Background] ensureOffscreenDocument called');
-  return new Promise(async (resolve, reject) => {
-    let attempts = 0;
-    const maxAttempts = 3;
+  
+  try {
+    // Create the offscreen document
+    console.log('[Background] Calling createOffscreenDocument...');
+    const document = await createOffscreenDocument();
     
-    const tryCreateOffscreen = async () => {
-      attempts++;
-      
-      try {
-        console.log(`[Background] Creating offscreen document (attempt ${attempts}/${maxAttempts})`);
-      
-              // Create the offscreen document
-        console.log('[Background] Calling createOffscreenDocument...');
-      const document = await createOffscreenDocument();
-      
-      if (!document) {
-        throw new Error('Failed to create offscreen document');
-      }
-      
-        console.log('[Background] Offscreen document created:', document.id);
-        
-        // Set timeout for ready message
+    if (!document) {
+      throw new Error('Failed to create offscreen document');
+    }
+    
+    console.log('[Background] Offscreen document created:', document.id);
+    
+    // Wait for ready message
+    return new Promise((resolve, reject) => {
       const timeoutId = setTimeout(() => {
-          chrome.runtime.onMessage.removeListener(messageListener);
-          
-          if (attempts < maxAttempts) {
-            console.log(`[Background] Offscreen setup timeout, retrying (${attempts}/${maxAttempts})`);
-            setTimeout(tryCreateOffscreen, 1000);
-          } else {
-            logError(new Error('Offscreen document setup timed out after all attempts'), 'ensureOffscreenDocument');
+        chrome.runtime.onMessage.removeListener(messageListener);
         reject(new Error('Offscreen document setup timed out'));
-          }
-        }, 15000); // 15 second timeout
+      }, 10000); // 10 second timeout
       
-        // Listen for ready message
       const messageListener = (message) => {
         if (message && message.action === 'offscreenReady') {
-            console.log('[Background] Offscreen document ready');
+          console.log('[Background] Offscreen document ready');
           clearTimeout(timeoutId);
           chrome.runtime.onMessage.removeListener(messageListener);
           resolve();
@@ -858,21 +864,12 @@ async function ensureOffscreenDocument() {
       };
       
       chrome.runtime.onMessage.addListener(messageListener);
-        
-      } catch (error) {
-        logError(error, `ensureOffscreenDocument - attempt ${attempts}`);
-        
-        if (attempts < maxAttempts) {
-          console.log(`[Background] Retrying offscreen creation (${attempts}/${maxAttempts})`);
-          setTimeout(tryCreateOffscreen, 2000);
-        } else {
-          reject(error);
-        }
-      }
-    };
+    });
     
-    tryCreateOffscreen();
-  });
+  } catch (error) {
+    logError(error, 'ensureOffscreenDocument');
+    throw error;
+  }
 }
 
 // すべてのタブからpublicIdを探して取得する関数

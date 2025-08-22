@@ -50,11 +50,26 @@ class AudioRouting {
     
     console.log('[AudioRouting] Initializing audio routing...');
     
+    // Create gain nodes for volume control (needed before connecting audio sources)
+    this.tabGainNode = audioContext.createGain();
+    this.micGainNode = audioContext.createGain();
+    this.masterGainNode = audioContext.createGain();
+    
+    // Set initial gain levels
+    this.tabGainNode.gain.value = this.config.tabGainLevel;
+    this.micGainNode.gain.value = this.config.micGainLevel;
+    this.masterGainNode.gain.value = this.config.masterGainLevel;
+    
+    // Create merger for combining audio sources
+    this.merger = audioContext.createChannelMerger(2);
+    this.mixerGain = audioContext.createGain();
+    this.mixerGain.gain.value = this.config.mixerGainLevel;
+    
     // Create destination and keep-alive components
     this.mediaDestination = audioContext.createMediaStreamDestination();
     this.setupKeepAlive();
     
-    console.log('[AudioRouting] Audio routing initialized');
+    console.log('[AudioRouting] Audio routing initialized with gain nodes');
   }
 
   /**
@@ -151,21 +166,6 @@ class AudioRouting {
    */
   setupAudioRouting(processor) {
     console.log('[AudioRouting] Setting up enhanced audio routing...');
-    
-    // Create gain nodes for volume control
-    this.tabGainNode = this.audioContext.createGain();
-    this.micGainNode = this.audioContext.createGain();
-    this.masterGainNode = this.audioContext.createGain();
-    
-    // Set initial gain levels
-    this.tabGainNode.gain.value = this.config.tabGainLevel;
-    this.micGainNode.gain.value = this.config.micGainLevel;
-    this.masterGainNode.gain.value = this.config.masterGainLevel;
-    
-    // Create merger for combining audio sources
-    this.merger = this.audioContext.createChannelMerger(2);
-    this.mixerGain = this.audioContext.createGain();
-    this.mixerGain.gain.value = this.config.mixerGainLevel;
     
     // Create a channel splitter to convert stereo to mono for processing
     this.splitter = this.audioContext.createChannelSplitter(2);

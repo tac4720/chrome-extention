@@ -470,6 +470,7 @@
     
     switch (message.action) {
       case 'start':
+        console.log('[Offscreen] 🎬 録音開始リクエスト受信');
         receivedPublicId = message.publicId;
         captureTabId = message.tabId;
         startRecording()
