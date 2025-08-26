@@ -152,6 +152,12 @@ async function createOffscreenDocument() {
 }
 // Handle messages from popup and offscreen window
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  // Handle END_CALL message from content script
+  if (message.type === "END_CALL") {
+    console.log("[Service Worker] Meet end-call clicked at:", message.time);
+    return false;
+  }
+
   if (!message || !message.action) {
     logError(new Error('Invalid message format'), 'onMessage');
     return false;

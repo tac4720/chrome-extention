@@ -14,7 +14,7 @@
   "content_scripts": [
     {
       "matches": ["https://meet.google.com/*"],
-      "js": ["content_prompt.js"],
+      "js": ["content_prompt.js", "content_script.js"],
       "run_at": "document_idle"
     }
   ],
