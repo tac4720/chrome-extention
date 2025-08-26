@@ -718,12 +718,13 @@ async function handleStartRecordingFromPopup(message, sendResponse) {
       globalTabStreamId = streamId;
       captureTargetTabId = message.tabId;
       
-      // ★ Paratalk ミーティングページを開く
+      // ★ Paratalk ミーティングページを新規ウィンドウで開く
       console.log('[Background] 🌐 Paratalk ミーティングページを開きます...');
       try {
-        await chrome.tabs.create({ 
+        await chrome.windows.create({ 
           url: 'https://app.paratalk.jp/meeting', 
-          active: true 
+          type: 'normal',
+          focused: true 
         });
         console.log('[Background] ✅ Paratalk ページを開きました');
       } catch (error) {
@@ -854,15 +855,39 @@ function showLoginRequiredBanner() {
  */
 function focusOrOpenParatalk() {
   try {
-    chrome.tabs.query({}, (tabs) => {
+    chrome.tabs.query({}, async (tabs) => {
       const targetUrl = 'https://app.paratalk.jp/meeting';
       const sitePrefix = 'https://app.paratalk.jp/';
       const existing = tabs.find(t => typeof t.url === 'string' && t.url.startsWith(sitePrefix));
+      
       if (existing) {
-        try { chrome.windows.update(existing.windowId, { focused: true }); } catch (e) { logError(e, 'focusOrOpenParatalk - focus window'); }
-        try { chrome.tabs.update(existing.id, { active: true, url: targetUrl }); } catch (e) { logError(e, 'focusOrOpenParatalk - activate tab'); }
+        try {
+          // 既存のParatalkタブを新しいウィンドウに移動
+          console.log('[Background] Moving existing Paratalk tab to new window');
+          
+          // 新しいウィンドウを作成
+          const newWindow = await chrome.windows.create({
+            type: 'normal',
+            focused: true
+          });
+          
+          // 既存のタブを新しいウィンドウに移動
+          await chrome.tabs.move(existing.id, {
+            windowId: newWindow.id,
+            index: 0
+          });
+          
+          // URLを更新（必要に応じて）
+          await chrome.tabs.update(existing.id, { url: targetUrl, active: true });
+          
+          console.log('[Background] ✅ Paratalk tab moved to new window');
+        } catch (e) { 
+          logError(e, 'focusOrOpenParatalk - move to new window');
+          // フォールバック: 既存ウィンドウにフォーカス
+          try { chrome.windows.update(existing.windowId, { focused: true }); } catch (e2) { logError(e2, 'focusOrOpenParatalk - fallback focus'); }
+        }
       } else {
-        try { chrome.tabs.create({ url: targetUrl, active: true }); } catch (e) { logError(e, 'focusOrOpenParatalk - open new'); }
+        try { chrome.windows.create({ url: targetUrl, type: 'normal', focused: true }); } catch (e) { logError(e, 'focusOrOpenParatalk - open new window'); }
       }
     });
   } catch (e) {
@@ -875,15 +900,39 @@ function focusOrOpenParatalk() {
  */
 function focusOrOpenParatalkMeeting() {
   try {
-    chrome.tabs.query({}, (tabs) => {
+    chrome.tabs.query({}, async (tabs) => {
       const targetUrl = 'https://app.paratalk.jp/meeting';
       const sitePrefix = 'https://app.paratalk.jp/';
       const existing = tabs.find(t => typeof t.url === 'string' && t.url.startsWith(sitePrefix));
+      
       if (existing) {
-        try { chrome.windows.update(existing.windowId, { focused: true }); } catch (e) { logError(e, 'focusOrOpenParatalkMeeting - focus window'); }
-        try { chrome.tabs.update(existing.id, { active: true, url: targetUrl }); } catch (e) { logError(e, 'focusOrOpenParatalkMeeting - activate tab'); }
+        try {
+          // 既存のParatalkタブを新しいウィンドウに移動
+          console.log('[Background] Moving existing Paratalk tab to new window');
+          
+          // 新しいウィンドウを作成
+          const newWindow = await chrome.windows.create({
+            type: 'normal',
+            focused: true
+          });
+          
+          // 既存のタブを新しいウィンドウに移動
+          await chrome.tabs.move(existing.id, {
+            windowId: newWindow.id,
+            index: 0
+          });
+          
+          // URLを更新（必要に応じて）
+          await chrome.tabs.update(existing.id, { url: targetUrl, active: true });
+          
+          console.log('[Background] ✅ Paratalk tab moved to new window');
+        } catch (e) { 
+          logError(e, 'focusOrOpenParatalkMeeting - move to new window');
+          // フォールバック: 既存ウィンドウにフォーカス
+          try { chrome.windows.update(existing.windowId, { focused: true }); } catch (e2) { logError(e2, 'focusOrOpenParatalkMeeting - fallback focus'); }
+        }
       } else {
-        try { chrome.tabs.create({ url: targetUrl, active: true }); } catch (e) { logError(e, 'focusOrOpenParatalkMeeting - open new'); }
+        try { chrome.windows.create({ url: targetUrl, type: 'normal', focused: true }); } catch (e) { logError(e, 'focusOrOpenParatalkMeeting - open new window'); }
       }
     });
   } catch (e) {
