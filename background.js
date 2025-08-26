@@ -106,6 +106,57 @@ function startHealthMonitoring() {
 startHealthMonitoring();
 
 /**
+ * Send end call message to Paratalk website
+ */
+async function sendEndCallToParatalk(endTime) {
+  try {
+    console.log('[Background] Sending end call message to Paratalk...');
+    
+    // Paratalkサイトのタブを検索
+    const tabs = await chrome.tabs.query({});
+    const paratalkTabs = tabs.filter(tab => 
+      tab.url && (
+        tab.url.includes('paratalk.jp') || 
+        tab.url.includes('app.paratalk.jp')
+      )
+    );
+    
+    if (paratalkTabs.length === 0) {
+      console.log('[Background] No Paratalk tabs found');
+      return;
+    }
+    
+    // 最初に見つかったParatalkタブに接続
+    const targetTab = paratalkTabs[0];
+    console.log('[Background] Found Paratalk tab:', targetTab.id, targetTab.url);
+    
+    // chrome.runtime.connectを使用してメッセージを送信
+    try {
+      const port = chrome.tabs.connect(targetTab.id, { name: 'paratalk-connection' });
+      
+      port.postMessage({
+        type: 'MEET_END_CALL',
+        timestamp: endTime,
+        source: 'google-meet'
+      });
+      
+      console.log('[Background] End call message sent to Paratalk via port');
+      
+      // 接続を閉じる
+      port.disconnect();
+      
+    } catch (connectError) {
+      console.error('[Background] Failed to connect to Paratalk tab:', connectError);
+      logError(connectError, 'sendEndCallToParatalk - connect');
+    }
+    
+  } catch (error) {
+    console.error('[Background] Error sending end call to Paratalk:', error);
+    logError(error, 'sendEndCallToParatalk');
+  }
+}
+
+/**
  * Create offscreen document using Chrome's offscreen API
  */
 async function createOffscreenDocument() {
@@ -155,6 +206,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // Handle END_CALL message from content script
   if (message.type === "END_CALL") {
     console.log("[Service Worker] Meet end-call clicked at:", message.time);
+    
+    // Paratalkサイトに通話終了メッセージを送信
+    sendEndCallToParatalk(message.time);
+    
     return false;
   }
 

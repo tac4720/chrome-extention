@@ -14,7 +14,12 @@
   "content_scripts": [
     {
       "matches": ["https://meet.google.com/*"],
-      "js": ["content_prompt.js", "content_script.js"],
+      "js": ["content_prompt.js", "content_script_in_meeting.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://*.paratalk.jp/*", "https://paratalk.jp/*"],
+      "js": ["content_script_in_paratalk.js"],
       "run_at": "document_idle"
     }
   ],
