@@ -281,6 +281,29 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
         return false;
 
+      case 'checkPublicId':
+        try {
+          console.log('[Background] checkPublicIdアクション開始');
+          findAllPublicIds((publicIds) => {
+            console.log('[Background] findAllPublicIds結果:', publicIds);
+            const hasPublicId = publicIds.length > 0;
+            if (hasPublicId) {
+              globalPublicId = publicIds[0].public_id;
+              console.log("[Background] checkPublicId: Found public_id:", globalPublicId);
+              console.log("[Background] 全publicIds:", publicIds.map(p => ({ tabId: p.tabId, url: p.url, public_id: p.public_id })));
+            } else {
+              globalPublicId = null;
+              console.log("[Background] checkPublicId: No public_id found");
+            }
+            console.log('[Background] checkPublicIdレスポンス送信:', { hasPublicId });
+            sendResponse({ hasPublicId });
+          });
+        } catch (e) {
+          console.error('[Background] checkPublicIdエラー:', e);
+          logError(e, 'onMessage - checkPublicId');
+          sendResponse({ hasPublicId: false });
+        }
+        return true; // 非同期レスポンスのため
 
       case 'getTabStream':
         return handleGetTabStream(sendResponse);
