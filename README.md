@@ -10,12 +10,27 @@ This Chrome extension captures audio from the current tab and the microphone, en
    bash audio_processing/download_lame.sh
    ```
 
-2. Load the extension in Chrome:
+2. **アイコンの設定（オプション）**:
+   
+   拡張機能のアイコンをカスタマイズする場合：
+   
+   ```powershell
+   # PowerShellでアイコンを生成（ImageMagickが必要）
+   .\create_icons.ps1
+   
+   # または、手動でアイコンファイルをicons/フォルダに配置：
+   # - icon16.png (16x16)
+   # - icon32.png (32x32) 
+   # - icon48.png (48x48)
+   # - icon128.png (128x128)
+   ```
+
+3. Load the extension in Chrome:
    - Open `chrome://extensions/`
    - Enable "Developer mode"
    - Click "Load unpacked" and select this extension folder.
 
-3. Click the extension icon to operate recording:
+4. Click the extension icon to operate recording:
    - "Start Recording" to begin capturing tab audio + microphone and start streaming via WebSocket (初回利用時にマイクのアクセス許可が求められますので「許可」を選択してください)
    - マイクのアクセスをブロックしてしまった場合は、Chrome の設定（chrome://settings/content/microphone）からマイク使用を許可し、再度「Start Recording」を押してください
    - ポップアップを閉じてもストリーミングは継続されます。環境によっては非表示のウィンドウ(offscreen.html)を自動起動して録音処理を実行します。停止するには再度ポップアップを開いて「Stop Streaming」をクリックしてください。
