@@ -297,62 +297,127 @@
    */
   function setupZoomEndCallMonitoring() {
     const endCallSelectors = [
+      // 基本的な退出ボタン
       'button[aria-label="退出"]',
       'button[aria-label*="退出"]',
       'button[aria-label*="Leave"]',
       'button[aria-label*="End"]',
+      'button[aria-label*="leave"]',
+      'button[aria-label*="end"]',
       'button[title*="Leave"]',
       'button[title*="End"]',
       'button[title*="退出"]',
+      'button[title*="leave"]',
+      'button[title*="end"]',
+      // Zoom特有のクラス
       '.footer-button-base__button[aria-label*="退出"]',
       '.footer-button__button[aria-label*="退出"]',
       'button.footer-button-base__button',
+      'button[data-testid*="leave"]',
+      'button[data-testid*="end"]',
+      'button[data-testid*="exit"]',
+      // より広範囲の検索
       '.leave-btn',
-      '.end-btn'
+      '.end-btn',
+      '.exit-btn',
+      'button[class*="leave"]',
+      'button[class*="end"]',
+      'button[class*="exit"]',
+      // 赤色のボタン（通常退出ボタンは赤）
+      'button[style*="background-color: rgb(255"]',
+      'button[style*="background-color:#ff"]',
+      'button[class*="danger"]',
+      'button[class*="error"]'
     ];
 
     function attachEndCallListener(btn) {
       if (!btn || btn.dataset.zoomEndListenerAttached) return;
       btn.dataset.zoomEndListenerAttached = '1';
 
+      console.log('[Zoom ContentScript] 退出ボタンにリスナーを追加:', btn.outerHTML.substring(0, 100));
       btn.addEventListener('click', () => {
+        console.log('[Zoom ContentScript] 退出ボタンがクリックされました - Paratalkに終了メッセージを送信');
         chrome.runtime.sendMessage({ type: "END_CALL", time: new Date().toISOString(), source: "zoom" });
       }, true);
     }
 
     function findAndAttachEndCallListeners() {
-      // 特定のセレクターで検索
-      for (const selector of endCallSelectors) {
-        const buttons = document.querySelectorAll(selector);
-        buttons.forEach(btn => attachEndCallListener(btn));
-      }
-
-      // 汎用的な検索
-      const allButtons = document.querySelectorAll('button');
-      allButtons.forEach(btn => {
-        const ariaLabel = btn.getAttribute('aria-label') || '';
-        const title = btn.title || '';
-        const textContent = (btn.textContent || '').trim();
-        const className = btn.className || '';
+      console.log('[Zoom ContentScript] 退出ボタンを検索中...');
+      let foundButtons = 0;
+      
+      try {
+        // hasZoomExitButton()と同じロジックを使用：すべての要素を検索
+        const allElements = document.querySelectorAll('*');
+        console.log(`[Zoom ContentScript] 全要素数: ${allElements.length}`);
         
-        if (
-          ariaLabel.includes('退出') ||
-          ariaLabel.toLowerCase().includes('leave') ||
-          ariaLabel.toLowerCase().includes('end') ||
-          title.includes('退出') ||
-          title.toLowerCase().includes('leave') ||
-          title.toLowerCase().includes('end') ||
-          textContent.includes('退出') ||
-          textContent.includes('終了') ||
-          textContent.toLowerCase().includes('leave') ||
-          textContent.toLowerCase().includes('end') ||
-          className.includes('footer-button-base__button') ||
-          className.includes('leave') ||
-          className.includes('end')
-        ) {
-          attachEndCallListener(btn);
-        }
-      });
+        // すべての要素をチェック
+        allElements.forEach((element) => {
+          // ボタンまたはボタン的な要素のみチェック
+          if (element.tagName === 'BUTTON' || 
+              element.getAttribute('role') === 'button' ||
+              element.onclick ||
+              element.className.includes('button') ||
+              element.className.includes('btn')) {
+            
+            const ariaLabel = element.getAttribute('aria-label') || '';
+            const textContent = (element.textContent || '').trim();
+            const className = element.className || '';
+            
+            // 退出ボタンの検出（hasZoomExitButton()と同じ条件）
+            if (element.offsetParent !== null && (
+                ariaLabel.includes('退出') ||
+                textContent.includes('退出') ||
+                ariaLabel.toLowerCase().includes('leave') ||
+                textContent.toLowerCase().includes('leave') ||
+                className.includes('footer-button-base__button')
+              )) {
+              
+              console.log('[Zoom ContentScript] 退出ボタンを発見:', {
+                tagName: element.tagName,
+                ariaLabel,
+                textContent: textContent.substring(0, 50),
+                className: className.substring(0, 100),
+                outerHTML: element.outerHTML.substring(0, 200)
+              });
+              
+              attachEndCallListener(element);
+              foundButtons++;
+            }
+          }
+        });
+        
+        // iframe内も検索（アクセス可能な場合のみ）
+        const iframes = document.querySelectorAll('iframe');
+        iframes.forEach((iframe) => {
+          try {
+            const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
+            if (iframeDoc) {
+              const iframeButtons = iframeDoc.querySelectorAll('button, [role="button"]');
+              iframeButtons.forEach(btn => {
+                const ariaLabel = btn.getAttribute('aria-label') || '';
+                const textContent = (btn.textContent || '').trim();
+                
+                if (ariaLabel.includes('退出') || textContent.includes('退出') || 
+                    ariaLabel.toLowerCase().includes('leave') || textContent.toLowerCase().includes('leave')) {
+                  console.log('[Zoom ContentScript] iframe内で退出ボタンを発見:', {
+                    ariaLabel,
+                    textContent: textContent.substring(0, 50)
+                  });
+                  attachEndCallListener(btn);
+                  foundButtons++;
+                }
+              });
+            }
+          } catch (e) {
+            // iframe アクセス不可
+          }
+        });
+        
+      } catch (error) {
+        console.error('[Zoom ContentScript] 退出ボタン検索エラー:', error);
+      }
+      
+      console.log(`[Zoom ContentScript] ${foundButtons}個の退出ボタンにリスナーを追加`);
     }
 
     // 初回検索
