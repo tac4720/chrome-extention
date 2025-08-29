@@ -1,10 +1,10 @@
 (() => {
-  if (window.__meet_slide_prompt_injected__) return;
-  window.__meet_slide_prompt_injected__ = true;
+  if (window.__teams_slide_prompt_injected__) return;
+  window.__teams_slide_prompt_injected__ = true;
 
   function createBanner(text, onYes, onNo) {
     const container = document.createElement('div');
-    container.id = 'meet-slide-banner';
+    container.id = 'teams-slide-banner';
     container.style.position = 'fixed';
     container.style.top = '-100px';
     container.style.left = '50%';
@@ -84,7 +84,7 @@
 
   function createInfoBanner(text) {
     const container = document.createElement('div');
-    container.id = 'meet-slide-info-banner';
+    container.id = 'teams-slide-info-banner';
     container.style.position = 'fixed';
     container.style.top = '-100px';
     container.style.left = '50%';
@@ -146,7 +146,7 @@
 
   function createLoginRequiredBanner() {
     const container = document.createElement('div');
-    container.id = 'meet-slide-login-required-banner';
+    container.id = 'teams-slide-login-required-banner';
     container.style.position = 'fixed';
     container.style.top = '-100px';
     container.style.left = '50%';
@@ -232,32 +232,170 @@
     };
   }
 
-  // Google Meetの退出ボタンが存在するかを判定
-  function hasMeetExitButton() {
+  // Teams会議の退出ボタンが存在するかを判定
+  function hasTeamsExitButton() {
     try {
-      const exitButton = document.querySelector('button[aria-label="通話から退出"]');
-      return exitButton && exitButton.offsetParent !== null; // 表示されているかも確認
-    } catch {
+      // Teams退出ボタンのセレクター（teams.live.com用も含む）
+      const exitButtonSelectors = [
+        '[data-tid="hangup-main-btn"]',
+        '#hangup-button',
+        '[data-track-module-name="StopMeetingButton"]',
+        'button[aria-label="退出します"]',
+        'button[aria-label*="退出"]',
+        'button[aria-label*="Leave"]',
+        'button[aria-label*="hang up"]',
+        'button[aria-label*="End call"]',
+        'button.fui-Button[aria-label*="退出"]',
+        'button[data-tid*="hangup"]',
+        // teams.live.com用の追加パターン
+        'button[title*="Leave"]',
+        'button[title*="退出"]',
+        'button[class*="hangup"]',
+        'button[class*="leave"]',
+        'button[class*="end-call"]',
+        '[role="button"][aria-label*="Leave"]',
+        '[role="button"][aria-label*="退出"]'
+      ];
+      
+      for (const selector of exitButtonSelectors) {
+        const buttons = document.querySelectorAll(selector);
+        for (const button of buttons) {
+          if (button && button.offsetParent !== null) {
+            return true;
+          }
+        }
+      }
+      
+      // より汎用的な検索（すべてのボタンをチェック）
+      const allButtons = document.querySelectorAll('button');
+      
+      for (const button of allButtons) {
+        const ariaLabel = button.getAttribute('aria-label') || '';
+        const dataTid = button.getAttribute('data-tid') || '';
+        const id = button.id || '';
+        const className = button.className || '';
+        const title = button.title || '';
+        const textContent = (button.textContent || '').trim();
+        
+        if (
+          button.offsetParent !== null && (
+            ariaLabel.includes('退出') ||
+            ariaLabel.includes('Leave') ||
+            ariaLabel.includes('hang up') ||
+            ariaLabel.includes('End call') ||
+            title.includes('Leave') ||
+            title.includes('退出') ||
+            title.includes('hang up') ||
+            title.includes('End call') ||
+            textContent.includes('退出') ||
+            textContent.includes('Leave') ||
+            textContent.includes('終了') ||
+            dataTid.includes('hangup') ||
+            id.includes('hangup') ||
+            className.includes('hangup') ||
+            className.includes('leave') ||
+            className.includes('end-call')
+          )
+        ) {
+          return true;
+        }
+      }
+      
+      return false;
+    } catch (error) {
       return false;
     }
   }
 
-  // Google Meet URLの場合のみ処理
-  if (!window.location.href.includes('meet.google.com')) return;
+  /**
+   * Teams会議の退出ボタンを監視
+   */
+  function setupTeamsEndCallMonitoring() {
+    const endCallSelectors = [
+      '[data-tid="hangup-main-btn"]',
+      '#hangup-button',
+      '[data-track-module-name="StopMeetingButton"]',
+      'button[aria-label*="退出"]',
+      'button[aria-label="退出します"]',
+      '[data-tid="call-end-button"]',
+      '[data-tid="hangup-button"]',
+      'button[title*="Leave"]',
+      'button[title*="hang up"]',
+      'button[aria-label*="Leave"]',
+      'button[aria-label*="hang up"]',
+      'button[aria-label*="End call"]',
+      'button[title*="End call"]'
+    ];
 
-  // Meet会議の退出ボタンが出現するまで待つ
-  function waitForMeetExitButton() {
+    function attachEndCallListener(btn) {
+      if (!btn || btn.dataset.teamsEndListenerAttached) return;
+      btn.dataset.teamsEndListenerAttached = '1';
+
+      btn.addEventListener('click', () => {
+        chrome.runtime.sendMessage({ type: "END_CALL", time: new Date().toISOString(), source: "teams" });
+      }, true);
+    }
+
+    function findAndAttachEndCallListeners() {
+      // 特定のセレクターで検索
+      for (const selector of endCallSelectors) {
+        const buttons = document.querySelectorAll(selector);
+        buttons.forEach(btn => attachEndCallListener(btn));
+      }
+
+      // クラス名でも検索（Teams特有のクラス）
+      const teamsButtons = document.querySelectorAll('button.fui-Button');
+      teamsButtons.forEach(btn => {
+        const ariaLabel = btn.getAttribute('aria-label') || '';
+        const dataTid = btn.getAttribute('data-tid') || '';
+        const id = btn.id || '';
+        
+        if (
+          ariaLabel.includes('退出') ||
+          ariaLabel.includes('Leave') ||
+          ariaLabel.includes('hang up') ||
+          ariaLabel.includes('End call') ||
+          dataTid.includes('hangup') ||
+          id.includes('hangup')
+        ) {
+          attachEndCallListener(btn);
+        }
+      });
+    }
+
+    // 初回検索
+    findAndAttachEndCallListeners();
+
+    // DOM変更を監視
+    const observer = new MutationObserver(() => {
+      findAndAttachEndCallListeners();
+    });
+
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['data-tid', 'title', 'aria-label', 'id', 'class']
+    });
+
+  }
+
+  // Teams会議の退出ボタンが出現するまで待つ
+  function waitForTeamsExitButton() {
     let bannerShown = false;
     
     const checkInterval = setInterval(() => {
-      if (hasMeetExitButton()) {
-        console.log('[Meet ContentPrompt] Meet exit button detected - user is in meeting');
+      if (hasTeamsExitButton()) {
+        // 退出ボタンの監視を開始（1回のみ）
+        if (!window.__teamsMonitoringStarted__) {
+          window.__teamsMonitoringStarted__ = true;
+          setupTeamsEndCallMonitoring();
+        }
         
         // バナーを表示（1回のみ）
         if (!bannerShown) {
           bannerShown = true;
-          console.log('[Meet ContentPrompt] Showing banner');
-          showMeetBanner();
+          showTeamsBanner();
         }
       }
     }, 1000);
@@ -268,39 +406,26 @@
     }, 60000);
   }
 
-  function showMeetBanner() {
+  function showTeamsBanner() {
     const banner = createBanner('paratalkを起動させますか？', () => {
-    console.log('[ContentPrompt] ユーザーが「はい」をクリック');
-    console.log('[ContentPrompt] タブURL:', location.href);
     
     banner.remove();
     
     // まずParatalkページを開いてからpublic_idのチェックを行う
-    console.log('[ContentPrompt] Paratalkページを開いています...');
     chrome.runtime.sendMessage({ action: 'focusOrOpenParatalk' }, () => {
-      console.log('[ContentPrompt] Paratalkページが開かれました、少し待ってからpublic_idをチェック...');
-      
       // 2秒待ってからpublic_idをチェック（Paratalkページの読み込み完了を待つ）
       setTimeout(() => {
-        console.log('[ContentPrompt] checkPublicIdアクションを送信中...');
         chrome.runtime.sendMessage({ action: 'checkPublicId' }, (response) => {
-          console.log('[ContentPrompt] ✅ checkPublicIdレスポンス受信:', response);
-          console.log('[ContentPrompt] chrome.runtime.lastError:', chrome.runtime.lastError);
-          
           if (chrome.runtime.lastError) {
-            console.error('[ContentPrompt] ❌ checkPublicIdエラー:', chrome.runtime.lastError);
             // エラーの場合はログイン必要バナーを表示
             createLoginRequiredBanner();
             return;
           }
           
           if (response && response.hasPublicId === true) {
-            console.log('[ContentPrompt] ✅ public_idが存在します - 拡張機能アイコンクリックを促すメッセージを表示');
             // public_idがある場合：拡張機能アイコンクリックを促すメッセージを表示
             showExtensionClickPrompt();
           } else {
-            console.log('[ContentPrompt] ❌ public_idが存在しません - ログイン必要バナーを表示');
-            console.log('[ContentPrompt] レスポンス詳細:', JSON.stringify(response));
             // public_idがない場合：ログイン必要バナーを表示
             createLoginRequiredBanner();
           }
@@ -313,9 +438,25 @@
     });
   }
 
-  // Meet退出ボタンの監視を開始
-  console.log('[Meet ContentPrompt] Google Meet URL detected, waiting for exit button...');
-  waitForMeetExitButton();
+  // Teams URLの場合は退出ボタンの監視を開始
+  if (window.location.href.includes('teams.live.com') || window.location.href.includes('teams.microsoft.com')) {
+    waitForTeamsExitButton();
+  }
+
+  // Paratalkからのメッセージも受信（Google Meetからの終了通知など）
+  chrome.runtime.onConnect.addListener((port) => {
+    if (port.name === 'teams-connection') {
+      port.onMessage.addListener((message) => {
+        if (message.type === 'MEET_END_CALL') {
+          // Google MeetからTeamsを終了させる必要はないので何もしない
+        }
+      });
+      
+      port.onDisconnect.addListener(() => {
+        // Port disconnected
+      });
+    }
+  });
 
   chrome.runtime.onMessage.addListener((message) => {
     try {
@@ -470,4 +611,3 @@
     }, 10000);
   }
 })();
-

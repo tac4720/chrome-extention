@@ -30,6 +30,11 @@
       "run_at": "document_idle"
     },
     {
+      "matches": ["https://teams.live.com/*"], 
+      "js": ["content_script_in_teams.js"],
+      "run_at": "document_idle"
+    },
+    {
       "matches": ["https://*.paratalk.jp/*", "https://paratalk.jp/*"],
       "js": ["content_script_in_paratalk.js"],
       "run_at": "document_idle"

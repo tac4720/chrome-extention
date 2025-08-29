@@ -157,6 +157,54 @@ async function sendEndCallToParatalk(endTime) {
 }
 
 /**
+ * Send end call message to Teams website
+ */
+async function sendEndCallToTeams(endTime) {
+  try {
+    console.log('[Background] Sending end call message to Teams...');
+    
+    // Teamsサイトのタブを検索
+    const tabs = await chrome.tabs.query({});
+    const teamsTabs = tabs.filter(tab => 
+      tab.url && tab.url.includes('teams.microsoft.com')
+    );
+    
+    if (teamsTabs.length === 0) {
+      console.log('[Background] No Teams tabs found');
+      return;
+    }
+    
+    // 最初に見つかったTeamsタブに接続
+    const targetTab = teamsTabs[0];
+    console.log('[Background] Found Teams tab:', targetTab.id, targetTab.url);
+    
+    // chrome.runtime.connectを使用してメッセージを送信
+    try {
+      const port = chrome.tabs.connect(targetTab.id, { name: 'teams-connection' });
+      
+      port.postMessage({
+        type: 'MEET_END_CALL',
+        timestamp: endTime,
+        source: 'google-meet'
+      });
+      
+      console.log('[Background] End call message sent to Teams via port');
+      
+      // 接続を閉じる
+      port.disconnect();
+      
+    } catch (connectError) {
+      console.error('[Background] Failed to connect to Teams tab:', connectError);
+      logError(connectError, 'sendEndCallToTeams - connect');
+    }
+    
+  } catch (error) {
+    console.error('[Background] Error sending end call to Teams:', error);
+    logError(error, 'sendEndCallToTeams');
+  }
+}
+
+/**
  * Create offscreen document using Chrome's offscreen API
  */
 async function createOffscreenDocument() {
@@ -205,10 +253,14 @@ async function createOffscreenDocument() {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // Handle END_CALL message from content script
   if (message.type === "END_CALL") {
-    console.log("[Service Worker] Meet end-call clicked at:", message.time);
+    const source = message.source || "google-meet";
+    console.log(`[Service Worker] ${source} end-call clicked at:`, message.time);
     
     // Paratalkサイトに通話終了メッセージを送信
     sendEndCallToParatalk(message.time);
+    
+    // 各プラットフォームから退出した際は、そのプラットフォーム以外には終了メッセージを送らない
+    // （例：Google Meetから退出してもTeamsは終了させない）
     
     return false;
   }

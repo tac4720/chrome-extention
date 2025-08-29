@@ -40,24 +40,34 @@ document.addEventListener('DOMContentLoaded', function() {
       
       let targetTab = tab;
       
-      // Google Meetタブかチェック
-      if (!tab.url.includes('meet.google.com')) {
-        // Google Meetタブではない場合、Google Meetタブを探す
+      // 会議タブかチェック（Google Meet または Teams）
+      const isMeetingTab = tab.url.includes('meet.google.com') || 
+                          tab.url.includes('teams.live.com') || 
+                          tab.url.includes('teams.microsoft.com');
+      
+      if (!isMeetingTab) {
+        // 会議タブではない場合、会議タブを探す
         const meetTabs = await chrome.tabs.query({ url: 'https://meet.google.com/*' });
+        const teamsTabs = await chrome.tabs.query({ url: 'https://teams.live.com/*' });
+        const teamsOldTabs = await chrome.tabs.query({ url: 'https://teams.microsoft.com/*' });
         
-        if (meetTabs.length === 0) {
-          throw new Error('Google Meetタブが見つかりません。先にGoogle Meetページを開いてください。');
+        const allMeetingTabs = [...meetTabs, ...teamsTabs, ...teamsOldTabs];
+        
+        if (allMeetingTabs.length === 0) {
+          throw new Error('Google MeetまたはTeamsタブが見つかりません。先に会議ページを開いてください。');
         }
         
-        // 最初のGoogle Meetタブを使用
-        targetTab = meetTabs[0];
-        console.log('[Popup] Google Meetタブを発見:', {
+        // 最初の会議タブを使用
+        targetTab = allMeetingTabs[0];
+        
+        const tabType = targetTab.url.includes('meet.google.com') ? 'Google Meet' : 'Microsoft Teams';
+        console.log(`[Popup] ${tabType}タブを発見:`, {
           id: targetTab.id,
           url: targetTab.url,
           title: targetTab.title
         });
         
-        // Google Meetタブをアクティブ化
+        // 会議タブをアクティブ化
         await chrome.tabs.update(targetTab.id, { active: true });
         await chrome.windows.update(targetTab.windowId, { focused: true });
         
@@ -93,7 +103,7 @@ document.addEventListener('DOMContentLoaded', function() {
       
       // ボタンを復元
       startButton.disabled = false;
-      buttonText.textContent = 'Google Meetタブをキャプチャ';
+      buttonText.textContent = '会議タブをキャプチャ';
       
       // 3秒後にステータスをリセット
       setTimeout(() => {
@@ -152,7 +162,7 @@ document.addEventListener('DOMContentLoaded', function() {
         startButton.style.display = 'block';
         stopButton.style.display = 'none';
         startButton.disabled = false;
-        buttonText.textContent = 'Google Meetタブをキャプチャ';
+        buttonText.textContent = '会議タブをキャプチャ';
       }
       
     } catch (error) {
