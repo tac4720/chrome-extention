@@ -1,10 +1,10 @@
 (() => {
-  if (window.__teams_slide_prompt_injected__) return;
-  window.__teams_slide_prompt_injected__ = true;
+  if (window.__zoom_slide_prompt_injected__) return;
+  window.__zoom_slide_prompt_injected__ = true;
 
   function createBanner(text, onYes, onNo) {
     const container = document.createElement('div');
-    container.id = 'teams-slide-banner';
+    container.id = 'zoom-slide-banner';
     container.style.position = 'fixed';
     container.style.top = '-100px';
     container.style.left = '50%';
@@ -84,7 +84,7 @@
 
   function createInfoBanner(text) {
     const container = document.createElement('div');
-    container.id = 'teams-slide-info-banner';
+    container.id = 'zoom-slide-info-banner';
     container.style.position = 'fixed';
     container.style.top = '-100px';
     container.style.left = '50%';
@@ -146,7 +146,7 @@
 
   function createLoginRequiredBanner() {
     const container = document.createElement('div');
-    container.id = 'teams-slide-login-required-banner';
+    container.id = 'zoom-slide-login-required-banner';
     container.style.position = 'fixed';
     container.style.top = '-100px';
     container.style.left = '50%';
@@ -232,107 +232,91 @@
     };
   }
 
-  // Teams会議の退出ボタンが存在するかを判定
-  function hasTeamsExitButton() {
+  // Zoom会議の退出ボタンが存在するかを判定
+  function hasZoomExitButton() {
     try {
-      // Teams退出ボタンのセレクター（teams.live.com用も含む）
-      const exitButtonSelectors = [
-        '[data-tid="hangup-main-btn"]',
-        '#hangup-button',
-        '[data-track-module-name="StopMeetingButton"]',
-        'button[aria-label="退出します"]',
-        'button[aria-label*="退出"]',
-        'button[aria-label*="Leave"]',
-        'button[aria-label*="hang up"]',
-        'button[aria-label*="End call"]',
-        'button.fui-Button[aria-label*="退出"]',
-        'button[data-tid*="hangup"]',
-        // teams.live.com用の追加パターン
-        'button[title*="Leave"]',
-        'button[title*="退出"]',
-        'button[class*="hangup"]',
-        'button[class*="leave"]',
-        'button[class*="end-call"]',
-        '[role="button"][aria-label*="Leave"]',
-        '[role="button"][aria-label*="退出"]'
-      ];
+      // すべての要素を検索
+      const allElements = document.querySelectorAll('*');
+      let exitButtonFound = false;
       
-      for (const selector of exitButtonSelectors) {
-        const buttons = document.querySelectorAll(selector);
-        for (const button of buttons) {
-          if (button && button.offsetParent !== null) {
-            return true;
+      // すべての要素をチェック
+      allElements.forEach((element) => {
+        // ボタンまたはボタン的な要素のみチェック
+        if (element.tagName === 'BUTTON' || 
+            element.getAttribute('role') === 'button' ||
+            element.onclick ||
+            element.className.includes('button') ||
+            element.className.includes('btn')) {
+          
+          const ariaLabel = element.getAttribute('aria-label') || '';
+          const textContent = (element.textContent || '').trim();
+          const className = element.className || '';
+          
+          // 退出ボタンの検出
+          if (element.offsetParent !== null && (
+              ariaLabel.includes('退出') ||
+              textContent.includes('退出') ||
+              ariaLabel.toLowerCase().includes('leave') ||
+              textContent.toLowerCase().includes('leave') ||
+              className.includes('footer-button-base__button')
+            )) {
+            exitButtonFound = true;
           }
         }
-      }
+      });
       
-      // より汎用的な検索（すべてのボタンをチェック）
-      const allButtons = document.querySelectorAll('button');
-      
-      for (const button of allButtons) {
-        const ariaLabel = button.getAttribute('aria-label') || '';
-        const dataTid = button.getAttribute('data-tid') || '';
-        const id = button.id || '';
-        const className = button.className || '';
-        const title = button.title || '';
-        const textContent = (button.textContent || '').trim();
-        
-        if (
-          button.offsetParent !== null && (
-            ariaLabel.includes('退出') ||
-            ariaLabel.includes('Leave') ||
-            ariaLabel.includes('hang up') ||
-            ariaLabel.includes('End call') ||
-            title.includes('Leave') ||
-            title.includes('退出') ||
-            title.includes('hang up') ||
-            title.includes('End call') ||
-            textContent.includes('退出') ||
-            textContent.includes('Leave') ||
-            textContent.includes('終了') ||
-            dataTid.includes('hangup') ||
-            id.includes('hangup') ||
-            className.includes('hangup') ||
-            className.includes('leave') ||
-            className.includes('end-call')
-          )
-        ) {
-          return true;
+      // iframe内も検索（アクセス可能な場合のみ）
+      const iframes = document.querySelectorAll('iframe');
+      iframes.forEach((iframe) => {
+        try {
+          const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
+          if (iframeDoc) {
+            const iframeButtons = iframeDoc.querySelectorAll('button, [role="button"]');
+            iframeButtons.forEach(btn => {
+              const ariaLabel = btn.getAttribute('aria-label') || '';
+              const textContent = (btn.textContent || '').trim();
+              
+              if (ariaLabel.includes('退出') || textContent.includes('退出')) {
+                exitButtonFound = true;
+              }
+            });
+          }
+        } catch (e) {
+          // iframe アクセス不可
         }
-      }
+      });
       
-      return false;
+      return exitButtonFound;
     } catch (error) {
       return false;
     }
   }
 
   /**
-   * Teams会議の退出ボタンを監視
+   * Zoom会議の退出ボタンを監視
    */
-  function setupTeamsEndCallMonitoring() {
+  function setupZoomEndCallMonitoring() {
     const endCallSelectors = [
-      '[data-tid="hangup-main-btn"]',
-      '#hangup-button',
-      '[data-track-module-name="StopMeetingButton"]',
+      'button[aria-label="退出"]',
       'button[aria-label*="退出"]',
-      'button[aria-label="退出します"]',
-      '[data-tid="call-end-button"]',
-      '[data-tid="hangup-button"]',
-      'button[title*="Leave"]',
-      'button[title*="hang up"]',
       'button[aria-label*="Leave"]',
-      'button[aria-label*="hang up"]',
-      'button[aria-label*="End call"]',
-      'button[title*="End call"]'
+      'button[aria-label*="End"]',
+      'button[title*="Leave"]',
+      'button[title*="End"]',
+      'button[title*="退出"]',
+      '.footer-button-base__button[aria-label*="退出"]',
+      '.footer-button__button[aria-label*="退出"]',
+      'button.footer-button-base__button',
+      '.leave-btn',
+      '.end-btn'
     ];
 
     function attachEndCallListener(btn) {
-      if (!btn || btn.dataset.teamsEndListenerAttached) return;
-      btn.dataset.teamsEndListenerAttached = '1';
+      if (!btn || btn.dataset.zoomEndListenerAttached) return;
+      btn.dataset.zoomEndListenerAttached = '1';
 
       btn.addEventListener('click', () => {
-        chrome.runtime.sendMessage({ type: "END_CALL", time: new Date().toISOString(), source: "teams" });
+        chrome.runtime.sendMessage({ type: "END_CALL", time: new Date().toISOString(), source: "zoom" });
       }, true);
     }
 
@@ -343,20 +327,28 @@
         buttons.forEach(btn => attachEndCallListener(btn));
       }
 
-      // クラス名でも検索（Teams特有のクラス）
-      const teamsButtons = document.querySelectorAll('button.fui-Button');
-      teamsButtons.forEach(btn => {
+      // 汎用的な検索
+      const allButtons = document.querySelectorAll('button');
+      allButtons.forEach(btn => {
         const ariaLabel = btn.getAttribute('aria-label') || '';
-        const dataTid = btn.getAttribute('data-tid') || '';
-        const id = btn.id || '';
+        const title = btn.title || '';
+        const textContent = (btn.textContent || '').trim();
+        const className = btn.className || '';
         
         if (
           ariaLabel.includes('退出') ||
-          ariaLabel.includes('Leave') ||
-          ariaLabel.includes('hang up') ||
-          ariaLabel.includes('End call') ||
-          dataTid.includes('hangup') ||
-          id.includes('hangup')
+          ariaLabel.toLowerCase().includes('leave') ||
+          ariaLabel.toLowerCase().includes('end') ||
+          title.includes('退出') ||
+          title.toLowerCase().includes('leave') ||
+          title.toLowerCase().includes('end') ||
+          textContent.includes('退出') ||
+          textContent.includes('終了') ||
+          textContent.toLowerCase().includes('leave') ||
+          textContent.toLowerCase().includes('end') ||
+          className.includes('footer-button-base__button') ||
+          className.includes('leave') ||
+          className.includes('end')
         ) {
           attachEndCallListener(btn);
         }
@@ -375,27 +367,26 @@
       childList: true,
       subtree: true,
       attributes: true,
-      attributeFilter: ['data-tid', 'title', 'aria-label', 'id', 'class']
+      attributeFilter: ['aria-label', 'title', 'class']
     });
-
   }
 
-  // Teams会議の退出ボタンが出現するまで待つ
-  function waitForTeamsExitButton() {
+  // Zoom会議の退出ボタンが出現するまで待つ
+  function waitForZoomExitButton() {
     let bannerShown = false;
     
     const checkInterval = setInterval(() => {
-      if (hasTeamsExitButton()) {
+      if (hasZoomExitButton()) {
         // 退出ボタンの監視を開始（1回のみ）
-        if (!window.__teamsMonitoringStarted__) {
-          window.__teamsMonitoringStarted__ = true;
-          setupTeamsEndCallMonitoring();
+        if (!window.__zoomMonitoringStarted__) {
+          window.__zoomMonitoringStarted__ = true;
+          setupZoomEndCallMonitoring();
         }
         
         // バナーを表示（1回のみ）
         if (!bannerShown) {
           bannerShown = true;
-          showTeamsBanner();
+          showZoomBanner();
         }
       }
     }, 1000);
@@ -406,7 +397,7 @@
     }, 60000);
   }
 
-  function showTeamsBanner() {
+  function showZoomBanner() {
     const banner = createBanner('paratalkを起動させますか？', () => {
       banner.remove();
       
@@ -436,25 +427,10 @@
     });
   }
 
-  // Teams URLの場合は退出ボタンの監視を開始
-  if (window.location.href.includes('teams.live.com') || window.location.href.includes('teams.microsoft.com')) {
-    waitForTeamsExitButton();
+  // Zoom URLの場合は退出ボタンの監視を開始
+  if (window.location.href.includes('zoom.us')) {
+    waitForZoomExitButton();
   }
-
-  // Paratalkからのメッセージも受信（Google Meetからの終了通知など）
-  chrome.runtime.onConnect.addListener((port) => {
-    if (port.name === 'teams-connection') {
-      port.onMessage.addListener((message) => {
-        if (message.type === 'MEET_END_CALL') {
-          // Google MeetからTeamsを終了させる必要はないので何もしない
-        }
-      });
-      
-      port.onDisconnect.addListener(() => {
-        // Port disconnected
-      });
-    }
-  });
 
   chrome.runtime.onMessage.addListener((message) => {
     try {

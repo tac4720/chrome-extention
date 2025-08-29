@@ -30,8 +30,13 @@
       "run_at": "document_idle"
     },
     {
-      "matches": ["https://teams.live.com/*"], 
+      "matches": ["https://teams.microsoft.com/*", "https://teams.live.com/*"],
       "js": ["content_script_in_teams.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://*.zoom.us/*"],
+      "js": ["content_script_in_zoom.js"],
       "run_at": "document_idle"
     },
     {

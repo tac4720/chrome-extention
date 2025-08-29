@@ -270,43 +270,28 @@
 
   function showMeetBanner() {
     const banner = createBanner('paratalkを起動させますか？', () => {
-    console.log('[ContentPrompt] ユーザーが「はい」をクリック');
-    console.log('[ContentPrompt] タブURL:', location.href);
-    
-    banner.remove();
-    
-    // まずParatalkページを開いてからpublic_idのチェックを行う
-    console.log('[ContentPrompt] Paratalkページを開いています...');
-    chrome.runtime.sendMessage({ action: 'focusOrOpenParatalk' }, () => {
-      console.log('[ContentPrompt] Paratalkページが開かれました、少し待ってからpublic_idをチェック...');
+      banner.remove();
       
-      // 2秒待ってからpublic_idをチェック（Paratalkページの読み込み完了を待つ）
-      setTimeout(() => {
-        console.log('[ContentPrompt] checkPublicIdアクションを送信中...');
-        chrome.runtime.sendMessage({ action: 'checkPublicId' }, (response) => {
-          console.log('[ContentPrompt] ✅ checkPublicIdレスポンス受信:', response);
-          console.log('[ContentPrompt] chrome.runtime.lastError:', chrome.runtime.lastError);
-          
-          if (chrome.runtime.lastError) {
-            console.error('[ContentPrompt] ❌ checkPublicIdエラー:', chrome.runtime.lastError);
-            // エラーの場合はログイン必要バナーを表示
-            createLoginRequiredBanner();
-            return;
-          }
-          
-          if (response && response.hasPublicId === true) {
-            console.log('[ContentPrompt] ✅ public_idが存在します - 拡張機能アイコンクリックを促すメッセージを表示');
-            // public_idがある場合：拡張機能アイコンクリックを促すメッセージを表示
-            showExtensionClickPrompt();
-          } else {
-            console.log('[ContentPrompt] ❌ public_idが存在しません - ログイン必要バナーを表示');
-            console.log('[ContentPrompt] レスポンス詳細:', JSON.stringify(response));
-            // public_idがない場合：ログイン必要バナーを表示
-            createLoginRequiredBanner();
-          }
-        });
-      }, 2000); // 2秒待機
-    });
+      // public_idをチェック
+      chrome.runtime.sendMessage({ action: 'checkPublicId' }, (response) => {
+        if (chrome.runtime.lastError) {
+          // エラーの場合はParatalkページを開いてからログイン必要バナーを表示
+          chrome.runtime.sendMessage({ action: 'focusOrOpenParatalk' }, () => {
+            setTimeout(() => createLoginRequiredBanner(), 1000);
+          });
+          return;
+        }
+        
+        if (response && response.hasPublicId === true) {
+          // public_idがある場合：直接拡張機能アイコンクリックを促すメッセージを表示
+          showExtensionClickPrompt();
+        } else {
+          // public_idがない場合：Paratalkページを開いてからログイン必要バナーを表示
+          chrome.runtime.sendMessage({ action: 'focusOrOpenParatalk' }, () => {
+            setTimeout(() => createLoginRequiredBanner(), 1000);
+          });
+        }
+      });
     }, () => {
       chrome.runtime.sendMessage({ action: 'promptResponse', response: 'no', url: location.href });
       banner.remove();

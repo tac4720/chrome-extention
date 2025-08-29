@@ -40,27 +40,37 @@ document.addEventListener('DOMContentLoaded', function() {
       
       let targetTab = tab;
       
-      // 会議タブかチェック（Google Meet または Teams）
+      // 会議タブかチェック（Google Meet、Teams、Zoom）
       const isMeetingTab = tab.url.includes('meet.google.com') || 
                           tab.url.includes('teams.live.com') || 
-                          tab.url.includes('teams.microsoft.com');
+                          tab.url.includes('teams.microsoft.com') ||
+                          tab.url.includes('zoom.us');
       
       if (!isMeetingTab) {
         // 会議タブではない場合、会議タブを探す
         const meetTabs = await chrome.tabs.query({ url: 'https://meet.google.com/*' });
         const teamsTabs = await chrome.tabs.query({ url: 'https://teams.live.com/*' });
         const teamsOldTabs = await chrome.tabs.query({ url: 'https://teams.microsoft.com/*' });
+        const zoomTabs = await chrome.tabs.query({ url: 'https://*.zoom.us/*' });
         
-        const allMeetingTabs = [...meetTabs, ...teamsTabs, ...teamsOldTabs];
+        const allMeetingTabs = [...meetTabs, ...teamsTabs, ...teamsOldTabs, ...zoomTabs];
         
         if (allMeetingTabs.length === 0) {
-          throw new Error('Google MeetまたはTeamsタブが見つかりません。先に会議ページを開いてください。');
+          throw new Error('Google Meet、Teams、またはZoomタブが見つかりません。先に会議ページを開いてください。');
         }
         
         // 最初の会議タブを使用
         targetTab = allMeetingTabs[0];
         
-        const tabType = targetTab.url.includes('meet.google.com') ? 'Google Meet' : 'Microsoft Teams';
+        let tabType = 'Unknown';
+        if (targetTab.url.includes('meet.google.com')) {
+          tabType = 'Google Meet';
+        } else if (targetTab.url.includes('teams.live.com') || targetTab.url.includes('teams.microsoft.com')) {
+          tabType = 'Microsoft Teams';
+        } else if (targetTab.url.includes('zoom.us')) {
+          tabType = 'Zoom';
+        }
+        
         console.log(`[Popup] ${tabType}タブを発見:`, {
           id: targetTab.id,
           url: targetTab.url,
