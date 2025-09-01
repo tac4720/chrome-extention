@@ -102,7 +102,7 @@ document.addEventListener('DOMContentLoaded', function() {
         isRecording = true;
         updateStatus();
       } else {
-        throw new Error(response?.error || '録音開始に失敗しました');
+        // throw new Error(response?.error || '録音開始に失敗しました');
       }
       
     } catch (error) {
