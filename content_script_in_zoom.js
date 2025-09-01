@@ -235,13 +235,48 @@
   // Zoom会議の退出ボタンが存在するかを判定
   function hasZoomExitButton() {
     try {
-      // すべての要素を検索
+      console.log('[Zoom ContentScript] 退出ボタン検出開始');
+      
+      // より具体的なZoom要素の検出
+      const zoomIndicators = [
+        // Zoom特有のUI要素
+        '[data-testid*="leave"]',
+        '[data-testid*="end"]', 
+        '[data-testid*="hangup"]',
+        '.footer-button-base__button',
+        '.footer-button__button',
+        '.zm-btn--danger',
+        // 一般的な退出ボタン
+        'button[aria-label*="Leave"]',
+        'button[aria-label*="End"]',
+        'button[aria-label*="退出"]',
+        'button[title*="Leave"]',
+        'button[title*="End"]',
+        'button[title*="退出"]',
+        // Zoomミーティングが開始されている場合の特徴的要素
+        '.join-audio-container',
+        '.meeting-client-inner',
+        '.zm-video-container',
+        '#wc-container-left',
+        '#wc-footer'
+      ];
+      
+      // まず、Zoomミーティングページかどうかを判定
+      const isZoomMeeting = zoomIndicators.some(selector => {
+        const elements = document.querySelectorAll(selector);
+        return elements.length > 0;
+      });
+      
+      if (isZoomMeeting) {
+        console.log('[Zoom ContentScript] Zoomミーティング要素を検出、バナーを表示');
+        return true;
+      }
+      
+      // より広範囲な検索（退出ボタン特定）
       const allElements = document.querySelectorAll('*');
       let exitButtonFound = false;
       
-      // すべての要素をチェック
       allElements.forEach((element) => {
-        // ボタンまたはボタン的な要素のみチェック
         if (element.tagName === 'BUTTON' || 
             element.getAttribute('role') === 'button' ||
             element.onclick ||
@@ -249,17 +284,26 @@
             element.className.includes('btn')) {
           
           const ariaLabel = element.getAttribute('aria-label') || '';
-          const textContent = (element.textContent || '').trim();
+          const textContent = (element.textContent || '').trim().toLowerCase();
           const className = element.className || '';
+          const title = element.title || '';
           
-          // 退出ボタンの検出
+          // より幅広い退出ボタンの検出
           if (element.offsetParent !== null && (
               ariaLabel.includes('退出') ||
-              textContent.includes('退出') ||
               ariaLabel.toLowerCase().includes('leave') ||
-              textContent.toLowerCase().includes('leave') ||
-              className.includes('footer-button-base__button')
+              ariaLabel.toLowerCase().includes('end meeting') ||
+              ariaLabel.toLowerCase().includes('end call') ||
+              textContent.includes('退出') ||
+              textContent.includes('leave') ||
+              textContent.includes('end meeting') ||
+              textContent.includes('end call') ||
+              title.toLowerCase().includes('leave') ||
+              title.toLowerCase().includes('end') ||
+              className.includes('footer-button-base__button') ||
+              className.includes('zm-btn--danger')
             )) {
+            console.log('[Zoom ContentScript] 退出ボタンを発見:', element);
             exitButtonFound = true;
           }
         }
@@ -274,9 +318,11 @@
             const iframeButtons = iframeDoc.querySelectorAll('button, [role="button"]');
             iframeButtons.forEach(btn => {
               const ariaLabel = btn.getAttribute('aria-label') || '';
-              const textContent = (btn.textContent || '').trim();
+              const textContent = (btn.textContent || '').trim().toLowerCase();
               
-              if (ariaLabel.includes('退出') || textContent.includes('退出')) {
+              if (ariaLabel.includes('退出') || ariaLabel.toLowerCase().includes('leave') ||
+                  textContent.includes('退出') || textContent.includes('leave')) {
+                console.log('[Zoom ContentScript] iframe内で退出ボタンを発見:', btn);
                 exitButtonFound = true;
               }
             });
@@ -286,8 +332,10 @@
         }
       });
       
+      console.log('[Zoom ContentScript] 退出ボタン検出結果:', exitButtonFound);
       return exitButtonFound;
     } catch (error) {
+      console.error('[Zoom ContentScript] 退出ボタン検出エラー:', error);
       return false;
     }
   }
@@ -449,8 +497,10 @@
         }
         
         // バナーを表示（1回のみ）
-        if (!bannerShown) {
+        if (!bannerShown && !window.__zoomBannerShown__) {
           bannerShown = true;
+          window.__zoomBannerShown__ = true;
+          console.log('[Zoom ContentScript] Zoomミーティング検出、バナーを表示');
           showZoomBanner();
         }
       }
@@ -463,30 +513,67 @@
   }
 
   function showZoomBanner() {
+    console.log('[Zoom ContentScript] showZoomBanner関数開始');
     const banner = createBanner('paratalkを起動させますか？', () => {
+      console.log('[Zoom ContentScript] 「はい」ボタンがクリックされました');
       banner.remove();
       
-      // public_idをチェック
-      chrome.runtime.sendMessage({ action: 'checkPublicId' }, (response) => {
-        if (chrome.runtime.lastError) {
-          // エラーの場合はParatalkページを開いてからログイン必要バナーを表示
-          chrome.runtime.sendMessage({ action: 'focusOrOpenParatalk' }, () => {
-            setTimeout(() => createLoginRequiredBanner(), 1000);
+      // 先にParatalkミーティングページを開く
+      console.log('[Zoom ContentScript] openParatalkMeetingアクションを送信');
+      
+      // openParatalkMeetingを試行するが、エラーが発生しても処理を続行
+      const executeNextStep = () => {
+        console.log('[Zoom ContentScript] 2秒待機後にpublicIdチェック開始');
+        setTimeout(() => {
+          console.log('[Zoom ContentScript] checkPublicIdアクションを送信');
+          chrome.runtime.sendMessage({ action: 'checkPublicId' }, (response) => {
+            console.log('[Zoom ContentScript] checkPublicId応答:', response);
+            console.log('[Zoom ContentScript] chrome.runtime.lastError:', chrome.runtime.lastError);
+            
+            if (chrome.runtime.lastError) {
+              console.error('[Zoom ContentScript] checkPublicIdエラー:', chrome.runtime.lastError);
+              // エラーの場合はログイン必要バナーを表示
+              console.log('[Zoom ContentScript] エラーのためログイン必要バナーを表示');
+              setTimeout(() => createLoginRequiredBanner(), 1000);
+              return;
+            }
+            
+            if (response && response.hasPublicId) {
+              console.log('[Zoom ContentScript] publicIdあり - 拡張機能クリックプロンプトを表示');
+              // public_idがある場合：拡張機能アイコンクリックを促すメッセージを表示
+              try {
+                showExtensionClickPrompt();
+                console.log('[Zoom ContentScript] showExtensionClickPrompt実行完了');
+              } catch (error) {
+                console.error('[Zoom ContentScript] showExtensionClickPromptエラー:', error);
+              }
+            } else {
+              console.log('[Zoom ContentScript] publicIdなし - ログイン必要バナーを表示');
+              // public_idがない場合：ログイン必要バナーを表示
+              setTimeout(() => createLoginRequiredBanner(), 1000);
+            }
           });
-          return;
-        }
-        
-        if (response && response.hasPublicId === true) {
-          // public_idがある場合：直接拡張機能アイコンクリックを促すメッセージを表示
-          showExtensionClickPrompt();
-        } else {
-          // public_idがない場合：Paratalkページを開いてからログイン必要バナーを表示
-          chrome.runtime.sendMessage({ action: 'focusOrOpenParatalk' }, () => {
-            setTimeout(() => createLoginRequiredBanner(), 1000);
-          });
-        }
-      });
+        }, 2000); // Paratalkページが開かれるのを2秒待つ
+      };
+      
+      try {
+        chrome.runtime.sendMessage({ action: 'openParatalkMeeting' }, (openResponse) => {
+          console.log('[Zoom ContentScript] openParatalkMeeting応答:', openResponse);
+          
+          if (chrome.runtime.lastError) {
+            console.error('[Zoom ContentScript] openParatalkMeetingエラー（処理は続行）:', chrome.runtime.lastError);
+          }
+          
+          // エラーがあってもなくても次のステップを実行
+          executeNextStep();
+        });
+      } catch (error) {
+        console.error('[Zoom ContentScript] openParatalkMeeting送信エラー:', error);
+        // エラーでも次のステップを実行
+        executeNextStep();
+      }
     }, () => {
+      console.log('[Zoom ContentScript] 「いいえ」ボタンがクリックされました');
       chrome.runtime.sendMessage({ action: 'promptResponse', response: 'no', url: location.href });
       banner.remove();
     });
@@ -494,7 +581,17 @@
 
   // Zoom URLの場合は退出ボタンの監視を開始
   if (window.location.href.includes('zoom.us')) {
+    console.log('[Zoom ContentScript] Zoom URLを検出:', window.location.href);
     waitForZoomExitButton();
+    
+    // フォールバック: 10秒後に退出ボタンが見つからない場合でもバナーを表示
+    setTimeout(() => {
+      if (!window.__zoomBannerShown__) {
+        console.log('[Zoom ContentScript] フォールバック: 10秒後にバナーを表示');
+        window.__zoomBannerShown__ = true;
+        showZoomBanner();
+      }
+    }, 10000);
   }
 
   chrome.runtime.onMessage.addListener((message) => {
@@ -518,31 +615,42 @@
    * 拡張機能アイコンクリックを促すメッセージを表示
    */
   function showExtensionClickPrompt() {
+    console.log('[Zoom ContentScript] showExtensionClickPrompt関数開始');
+    
     // 既存のプロンプトがある場合は削除
     const existingPrompt = document.getElementById('paratalk-extension-prompt');
     if (existingPrompt) {
+      console.log('[Zoom ContentScript] 既存のプロンプトを削除');
       existingPrompt.remove();
     }
 
     const container = document.createElement('div');
     container.id = 'paratalk-extension-prompt';
     container.style.cssText = `
-      position: fixed;
-      top: 16px;
-      right: 16px;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      color: white;
-      padding: 20px;
-      border-radius: 12px;
-      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-      z-index: 10001;
-      max-width: 350px;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      font-size: 14px;
-      line-height: 1.5;
-      animation: slideInFromRight 0.3s ease-out;
-      backdrop-filter: blur(10px);
-      border: 1px solid rgba(255, 255, 255, 0.2);
+      position: fixed !important;
+      top: 16px !important;
+      right: 16px !important;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+      color: white !important;
+      padding: 20px !important;
+      border-radius: 12px !important;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3) !important;
+      z-index: 2147483647 !important;
+      max-width: 350px !important;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+      font-size: 14px !important;
+      line-height: 1.5 !important;
+      animation: slideInFromRight 0.3s ease-out !important;
+      backdrop-filter: blur(10px) !important;
+      border: 1px solid rgba(255, 255, 255, 0.2) !important;
+      display: block !important;
+      visibility: visible !important;
+      opacity: 1 !important;
+      width: auto !important;
+      height: auto !important;
+      overflow: visible !important;
+      pointer-events: auto !important;
+      transform: none !important;
     `;
 
     // アニメーション用CSSを追加
@@ -633,12 +741,78 @@
       closeButton.style.background = 'rgba(255, 255, 255, 0.2)';
     });
 
+    console.log('[Zoom ContentScript] プロンプト要素を構築中');
     container.appendChild(title);
     container.appendChild(message);
     container.appendChild(iconHint);
     container.appendChild(closeButton);
     
-    document.documentElement.appendChild(container);
+    console.log('[Zoom ContentScript] DOMにプロンプト要素を追加');
+    console.log('[Zoom ContentScript] 現在のwindow情報:', {
+      isIframe: window !== window.top,
+      href: window.location.href,
+      parentHref: window.parent ? (window.parent !== window ? 'iframe detected' : 'same window') : 'no parent'
+    });
+    
+    // 複数の場所に要素を追加を試行
+    const targetElements = [
+      document.documentElement,
+      document.body,
+      document.querySelector('body'),
+      document.querySelector('html')
+    ].filter(Boolean);
+    
+    let added = false;
+    for (const target of targetElements) {
+      try {
+        if (target && typeof target.appendChild === 'function') {
+          target.appendChild(container);
+          console.log('[Zoom ContentScript] プロンプト要素を追加:', target.tagName);
+          added = true;
+          break;
+        }
+      } catch (e) {
+        console.warn('[Zoom ContentScript] 追加失敗:', target.tagName, e);
+      }
+    }
+    
+    if (!added) {
+      console.error('[Zoom ContentScript] どの要素にも追加できませんでした');
+    } else {
+      console.log('[Zoom ContentScript] プロンプト要素追加完了:', container);
+      
+      // z-indexを強制的に最大値に設定
+      container.style.zIndex = '2147483647';
+      container.style.position = 'fixed';
+      
+      // 1秒後に要素が実際に表示されているかチェック
+      setTimeout(() => {
+        const rect = container.getBoundingClientRect();
+        const isVisible = rect.width > 0 && rect.height > 0 && 
+                         container.offsetParent !== null &&
+                         getComputedStyle(container).display !== 'none';
+        console.log('[Zoom ContentScript] プロンプト可視性チェック:', {
+          rect,
+          isVisible,
+          offsetParent: container.offsetParent,
+          computedDisplay: getComputedStyle(container).display,
+          computedVisibility: getComputedStyle(container).visibility
+        });
+        
+        if (!isVisible) {
+          console.warn('[Zoom ContentScript] プロンプトが見えない可能性があります');
+          
+          // iframe内で表示できない場合の代替案として、background scriptに表示要請
+          if (window !== window.top) {
+            console.log('[Zoom ContentScript] iframe内のため、background scriptに表示要請');
+            chrome.runtime.sendMessage({
+              action: 'showExtensionClickPrompt',
+              source: 'zoom-iframe'
+            });
+          }
+        }
+      }, 1000);
+    }
 
     // 10秒後に自動で閉じる
     setTimeout(() => {

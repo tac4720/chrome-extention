@@ -421,7 +421,7 @@
               return;
             }
             
-            if (response && response.hasPublicId === true) {
+            if (response && response.hasPublicId) {
               // public_idがある場合：拡張機能アイコンクリックを促すメッセージを表示
               showExtensionClickPrompt();
             } else {

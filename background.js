@@ -335,7 +335,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
       case 'checkPublicId':
         try {
-          console.log('[Background] checkPublicIdアクション開始');
+          console.log('[Background] checkPublicIdアクション開始 - 最新のCookie状態をチェック');
+          
+          // ログアウト検出のため、毎回最新のCookieをチェック
           findAllPublicIds((publicIds) => {
             console.log('[Background] findAllPublicIds結果:', publicIds);
             const hasPublicId = publicIds.length > 0;
@@ -345,7 +347,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
               console.log("[Background] 全publicIds:", publicIds.map(p => ({ tabId: p.tabId, url: p.url, public_id: p.public_id })));
             } else {
               globalPublicId = null;
-              console.log("[Background] checkPublicId: No public_id found");
+              console.log("[Background] checkPublicId: No public_id found - ユーザーがログアウトした可能性");
             }
             console.log('[Background] checkPublicIdレスポンス送信:', { hasPublicId });
             sendResponse({ hasPublicId });
@@ -437,14 +439,14 @@ function handleStartRecording(sendResponse) {
       console.log('[Background] Using existing captureTargetTabId:', captureTargetTabId);
     }
 
-    // Find public IDs with timeout
+    // 録音開始時も最新のCookie状態をチェック（ログアウト検出のため）
     const publicIdTimeout = setTimeout(() => {
       logError(new Error('Public ID search timeout'), 'handleStartRecording');
       pendingStartRecording = false;
       sendResponse({ error: 'Initialization timeout' });
     }, 10000);
     
-    console.log('[Background] Calling findAllPublicIds...');
+    console.log('[Background] 録音開始時にpublic_idを再チェック...');
     findAllPublicIds((publicIds) => {
       console.log('[Background] findAllPublicIds callback called with:', publicIds);
       clearTimeout(publicIdTimeout);
@@ -453,7 +455,6 @@ function handleStartRecording(sendResponse) {
         globalPublicId = publicIds[0].public_id;
         console.log("[Background] Found public_id:", globalPublicId);
       } else {
-        globalPublicId = null;
         console.log("[Background] No public_id found");
         // Show login required banner and abort start
         try { showLoginRequiredBanner(); } catch (e) { logError(e, 'handleStartRecording - showLoginRequiredBanner'); }
@@ -793,21 +794,11 @@ async function handleStartRecordingFromPopup(message, sendResponse) {
       globalTabStreamId = streamId;
       captureTargetTabId = message.tabId;
       
-      // ★ Paratalk ミーティングページを新規ウィンドウで開く
-      console.log('[Background] 🌐 Paratalk ミーティングページを開きます...');
-      try {
-        await chrome.windows.create({ 
-          url: 'https://app.paratalk.jp/meeting', 
-          type: 'normal',
-          focused: true 
-        });
-        console.log('[Background] ✅ Paratalk ページを開きました');
-      } catch (error) {
-        console.error('[Background] ❌ Paratalk ページを開けませんでした:', error);
-      }
+      // キャプチャー時は自動でParatalkウィンドウを開かない（ユーザーが手動で開く）
+      console.log('[Background] ✅ タブキャプチャ完了 - Paratalkウィンドウは手動で開いてください');
       
-      // 少し待ってから publicId を検索
-      console.log('[Background] 🔍 publicId を検索中...');
+      // ポップアップからの録音開始時も最新のCookie状態をチェック
+      console.log('[Background] 🔍 ポップアップ録音開始時にpublic_idを再チェック...');
       setTimeout(() => {
         findAllPublicIds(async (publicIds) => {
         if (publicIds.length > 0) {
@@ -815,7 +806,7 @@ async function handleStartRecordingFromPopup(message, sendResponse) {
           console.log('[Background] ✅ publicId 取得成功:', globalPublicId);
         } else {
           globalPublicId = null;
-          console.log('[Background] ⚠️ publicId が見つかりません');
+          console.log('[Background] ⚠️ publicId が見つかりません - ログアウトした可能性');
         }
         
         pendingStartRecording = true;
@@ -876,16 +867,8 @@ async function handlePromptResponse(message, sender) {
         logError(e, 'handlePromptResponse - sender.tab.id');
       }
 
-      // Paratalkのミーティングページを開く
-      try {
-        await chrome.windows.create({
-          url: 'https://app.paratalk.jp/meeting',
-          type: 'normal',
-          focused: true
-        });
-      } catch (e) {
-        logError(e, 'handlePromptResponse - redirect');
-      }
+      // キャプチャー時は自動でParatalkウィンドウを開かない（ユーザーが手動で開く）
+      console.log('[Background] バナー応答 - Paratalkウィンドウは手動で開いてください');
 
       // handleStartRecordingを呼び出して録音を開始
       console.log('[Background] Calling handleStartRecording from prompt response');
