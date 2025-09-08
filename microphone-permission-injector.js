@@ -17,7 +17,7 @@ const injectMicrophonePermissionIframe = () => {
   iframe.setAttribute("hidden", "hidden");
   iframe.setAttribute("id", "permissionsIFrame");
   iframe.setAttribute("allow", "microphone");
-  iframe.src = chrome.runtime.getURL("permission/microphone-permission-request.html");
+  iframe.src = chrome.runtime.getURL("request_mic_permission/microphone-permission-request.html");
   
   // bodyが読み込まれるまで待機
   if (document.body) {

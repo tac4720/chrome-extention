@@ -11,20 +11,20 @@ async function getUserPermission() {
   const statusElement = document.getElementById('status');
   
   try {
-    console.log('マイク権限をリクエストしています...');
+    console.log('Paratalk拡張機能がマイク権限をリクエストしています...');
     
     if (statusElement) {
-      statusElement.textContent = 'マイク権限をリクエスト中...';
+      statusElement.textContent = 'Paratalkがマイク権限をリクエスト中...';
       statusElement.style.color = '#007bff';
     }
 
     // navigator.mediaDevices.getUserMediaを使用してマイクアクセスをリクエスト
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     
-    console.log('マイクアクセスが許可されました');
+    console.log('Paratalk拡張機能のマイクアクセスが許可されました');
     
     if (statusElement) {
-      statusElement.textContent = '✓ マイク権限が正常に取得されました';
+      statusElement.textContent = '✓ Paratalkのマイク権限が正常に取得されました';
       statusElement.style.color = '#28a745';
     }
 
@@ -42,18 +42,18 @@ async function getUserPermission() {
     }
 
   } catch (error) {
-    console.error('マイク権限の取得でエラーが発生しました:', error);
+    console.error('Paratalk拡張機能のマイク権限の取得でエラーが発生しました:', error);
     
     if (statusElement) {
-      statusElement.textContent = '✗ マイク権限の取得に失敗しました';
+      statusElement.textContent = '✗ Paratalkのマイク権限の取得に失敗しました';
       statusElement.style.color = '#dc3545';
     }
 
     // エラーの種類に応じてメッセージを表示
-    let errorMessage = 'マイク権限の取得に失敗しました。';
+    let errorMessage = 'Paratalk拡張機能のマイク権限の取得に失敗しました。';
     
     if (error.name === 'NotAllowedError') {
-      errorMessage = 'マイクアクセスが拒否されました。ブラウザの設定からマイクの使用を許可してください。';
+      errorMessage = 'Paratalk拡張機能のマイクアクセスが拒否されました。ブラウザの設定からマイクの使用を許可してください。';
     } else if (error.name === 'NotFoundError') {
       errorMessage = 'マイクが見つかりませんでした。マイクが接続されているか確認してください。';
     } else if (error.name === 'NotSupportedError') {
