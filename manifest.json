@@ -9,7 +9,7 @@
     "48": "icons/paratalk_logo_full.png",
     "128": "icons/paratalk_logo_full.png"
   },
-  "permissions": ["cookies", "tabs", "windows", "tabCapture", "offscreen", "desktopCapture", "activeTab"],
+  "permissions": ["cookies", "tabs", "windows", "tabCapture", "offscreen", "activeTab"],
   "host_permissions": ["<all_urls>"],
   "action": {
     "default_popup": "popup.html",
