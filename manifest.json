@@ -26,17 +26,17 @@
   "content_scripts": [
     {
       "matches": ["https://meet.google.com/*"],
-      "js": ["content_prompt.js", "content_script_in_meeting.js"],
+      "js": ["content_prompt.js", "content_script_in_meeting.js", "microphone-permission-injector.js"],
       "run_at": "document_idle"
     },
     {
       "matches": ["https://teams.microsoft.com/*", "https://teams.live.com/*"],
-      "js": ["content_script_in_teams.js"],
+      "js": ["content_script_in_teams.js", "microphone-permission-injector.js"],
       "run_at": "document_idle"
     },
     {
       "matches": ["https://*.zoom.us/*"],
-      "js": ["content_script_in_zoom.js"],
+      "js": ["content_script_in_zoom.js", "microphone-permission-injector.js"],
       "run_at": "document_idle"
     },
     {
@@ -51,7 +51,7 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["audio_processing/mp3-encoder.min.js", "audio_processing/audio-worklet.js", "offscreen.html", "prompt.html", "prompt.js", "get_audio/tab-audio-capture.js", "get_audio/mic-audio-capture.js", "audio_processing/audio-routing.js"],
+      "resources": ["audio_processing/mp3-encoder.min.js", "audio_processing/audio-worklet.js", "offscreen.html", "prompt.html", "prompt.js", "get_audio/tab-audio-capture.js", "get_audio/mic-audio-capture.js", "audio_processing/audio-routing.js", "permission/microphone-permission-request.html", "permission/requestPermission.js"],
       "matches": ["<all_urls>"]
     }
   ]

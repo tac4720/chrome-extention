@@ -59,7 +59,7 @@ class MicAudioCapture {
       return stream;
 
     } catch (error) {
-      console.warn('[MicAudioCapture] Microphone access denied:', error.message);
+      console.warn('[MicAudioCapture] Microphone access denied:', error.name, error.message);
       this.micStream = null;
       this.isActive = false;
       
