@@ -40,7 +40,7 @@
       "run_at": "document_idle"
     },
     {
-      "matches": ["https://*.paratalk.jp/*", "https://paratalk.jp/*"],
+      "matches": ["https://app.paratalk.jp/*"],
       "js": ["content_script_in_paratalk.js"],
       "run_at": "document_idle"
     }
@@ -52,7 +52,7 @@
   "web_accessible_resources": [
     {
       "resources": ["audio_processing/mp3-encoder.min.js", "audio_processing/audio-worklet.js", "offscreen.html", "prompt.html", "prompt.js", "get_audio/tab-audio-capture.js", "get_audio/mic-audio-capture.js", "audio_processing/audio-routing.js", "request_mic_permission/microphone-permission-request.html", "request_mic_permission/requestPermission.js"],
-      "matches": ["<all_urls>"]
+      "matches": ["https://meet.google.com/*", "https://teams.microsoft.com/*", "https://teams.live.com/*", "https://zoom.us/*", "https://*.zoom.us/*", "https://app.paratalk.jp/*"]
     }
   ]
 }
